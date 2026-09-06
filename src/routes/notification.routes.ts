@@ -54,7 +54,7 @@ router.patch('/:id/read', protect, async (req: AuthRequest, res: Response) => {
 
     const updated = await prisma.notification.update({
       where: { id },
-      data: { read: true }
+      data: { isRead: true }
     });
 
     return res.json({ success: true, data: updated });
@@ -72,8 +72,8 @@ router.patch('/mark-all-read', protect, async (req: AuthRequest, res: Response) 
     }
 
     await prisma.notification.updateMany({
-      where: { userId: currentUserId, read: false },
-      data: { read: true }
+      where: { userId: currentUserId, isRead: false },
+      data: { isRead: true }
     });
 
     return res.json({ success: true, message: "Toutes les notifications ont été marquées comme lues." });
