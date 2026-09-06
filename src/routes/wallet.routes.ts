@@ -1,7 +1,6 @@
 import { Router } from 'express';
-import { getMyWallet, depositToWallet } from '../controllers/wallet.controller';
-import { protect, restrictTo } from '../middleware/auth.middleware';
-import { Role } from '@prisma/client';
+import { getMyWallet, depositToWallet, withdrawFromWallet } from '../controllers/wallet.controller';
+import { protect } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -11,7 +10,10 @@ router.use(protect);
 // Consulter son propre portefeuille
 router.get('/', getMyWallet);
 
-// Recharger son portefeuille (ou effectuer un dépôt)
+// Recharger son portefeuille (dépôt)
 router.post('/deposit', depositToWallet);
+
+// Effectuer un retrait depuis le portefeuille
+router.post('/withdraw', withdrawFromWallet);
 
 export default router;
