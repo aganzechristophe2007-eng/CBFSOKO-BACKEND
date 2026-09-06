@@ -1,0 +1,117 @@
+import { Router, Response } from 'express';
+import { prisma } from '../lib/prisma';
+import { protect, AuthRequest } from '../middleware/auth.middleware';
+
+const router = Router();
+
+// ==========================================
+// SECTION : GESTION DES NOTIFICATIONS
+// ==========================================
+
+// GET : Récupérer toutes les notifications de l'utilisateur connecté
+router.get('/', protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Non authentifié" });
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: currentUserId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        sender: { select: { id: true, name: true, avatar: true } }
+      }
+    });
+
+    return res.json({ success: true, data: notifications });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PATCH : Marquer une notification spécifique comme lue
+router.patch('/:id/read', protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    const { id } = req.params;
+
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Non authentifié" });
+    }
+
+    const notification = await prisma.notification.findUnique({
+      where: { id }
+    });
+
+    if (!notification) {
+      return res.status(404).json({ success: false, message: "Notification introuvable." });
+    }
+
+    if (notification.userId !== currentUserId) {
+      return res.status(403).json({ success: false, message: "Action non autorisée." });
+    }
+
+    const updated = await prisma.notification.update({
+      where: { id },
+      data: { read: true }
+    });
+
+    return res.json({ success: true, data: updated });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// PATCH : Marquer toutes les notifications comme lues
+router.patch('/mark-all-read', protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Non authentifié" });
+    }
+
+    await prisma.notification.updateMany({
+      where: { userId: currentUserId, read: false },
+      data: { read: true }
+    });
+
+    return res.json({ success: true, message: "Toutes les notifications ont été marquées comme lues." });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// DELETE : Supprimer une notification
+router.delete('/:id', protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    const { id } = req.params;
+
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Non authentifié" });
+    }
+
+    const notification = await prisma.notification.findUnique({
+      where: { id }
+    });
+
+    if (!notification) {
+      return res.status(404).json({ success: false, message: "Notification introuvable." });
+    }
+
+    if (notification.userId !== currentUserId) {
+      return res.status(403).json({ success: false, message: "Action non autorisée." });
+    }
+
+    await prisma.notification.delete({
+      where: { id }
+    });
+
+    return res.json({ success: true, message: "Notification supprimée avec succès." });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+export default router;
