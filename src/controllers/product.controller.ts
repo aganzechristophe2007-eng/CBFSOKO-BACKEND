@@ -16,7 +16,7 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       take: limit,
       include: { 
         category: true, 
-        seller: { select: { id: true, name: true, email: true } },
+        seller: { select: { id: true, name: true, email: true, phone: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -25,6 +25,30 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
   } catch (error: any) {
     console.error("--> ERREUR CRITIQUE GET PRODUCTS :", error);
     next(new AppError(error.message || 'Erreur lors de la récupération des produits.', 500));
+  }
+};
+
+// Récupérer un produit spécifique par son ID (C'est celle-ci qui manquait)
+export const getProductById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        seller: { select: { id: true, name: true, email: true, phone: true } },
+      },
+    });
+
+    if (!product) {
+      return next(new AppError('Produit introuvable.', 404));
+    }
+
+    res.status(200).json({ success: true, data: product });
+  } catch (error: any) {
+    console.error("--> ERREUR CRITIQUE GET PRODUCT BY ID :", error);
+    next(new AppError(error.message || 'Erreur lors de la récupération du produit.', 500));
   }
 };
 
