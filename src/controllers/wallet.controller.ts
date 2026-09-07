@@ -7,7 +7,6 @@ const prisma = new PrismaClient();
 
 /**
  * Récupérer le portefeuille de l'utilisateur connecté
- * (Crée automatiquement un portefeuille à 0 si l'utilisateur n'en a pas encore)
  */
 export const getMyWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -22,7 +21,7 @@ export const getMyWallet = async (req: AuthRequest, res: Response, next: NextFun
       include: {
         transactions: {
           orderBy: { createdAt: 'desc' },
-          take: 10, // Les 10 dernières transactions
+          take: 10,
         },
       },
     });
@@ -50,7 +49,7 @@ export const getMyWallet = async (req: AuthRequest, res: Response, next: NextFun
 };
 
 /**
- * Initier un dépôt (rechargement du portefeuille via Mobile Money / Cash)
+ * Initier un dépôt (Le solde N'EST PAS mis à jour directement, statut PENDING en attente du réseau)
  */
 export const depositToWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -61,7 +60,6 @@ export const depositToWallet = async (req: AuthRequest, res: Response, next: Nex
       return next(new AppError('Utilisateur non authentifié.', 401));
     }
 
-    // Gestion intelligente du format (prend en charge {amount, currency} ou {amountUSD/amountCDF})
     let finalAmountUSD = 0;
     let finalAmountCDF = 0;
 
@@ -81,7 +79,6 @@ export const depositToWallet = async (req: AuthRequest, res: Response, next: Nex
       return next(new AppError('Le montant du dépôt doit être supérieur à zéro.', 400));
     }
 
-    // Récupérer ou créer le wallet si inexistant
     let wallet = await prisma.wallet.findUnique({ where: { userId } });
     if (!wallet) {
       wallet = await prisma.wallet.create({
@@ -89,38 +86,26 @@ export const depositToWallet = async (req: AuthRequest, res: Response, next: Nex
       });
     }
 
-    // Enregistrer la transaction de dépôt
-    await prisma.transaction.create({
+    // Création de la transaction en PENDING : en attente de la confirmation réelle du réseau mobile/paiement
+    const transaction = await prisma.transaction.create({
       data: {
         walletId: wallet.id,
         amountUSD: finalAmountUSD,
         amountCDF: finalAmountCDF,
         type: 'DEPOSIT',
-        status: 'SUCCESS', // Directement validé en simulation
+        status: 'PENDING', // Attend la confirmation réseau / opérateur
         provider: provider || 'MPESA',
         reference: reference || `DEP-${Date.now()}`,
       },
     });
 
-    // Mettre à jour le solde du portefeuille
-    const updatedWallet = await prisma.wallet.update({
-      where: { id: wallet.id },
-      data: {
-        balanceUSD: { increment: finalAmountUSD },
-        balanceCDF: { increment: finalAmountCDF },
-      },
-      include: { 
-        transactions: {
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        } 
-      },
-    });
-
     res.status(200).json({
       success: true,
-      message: 'Portefeuille rechargé avec succès.',
-      data: updatedWallet,
+      message: 'Demande de dépôt initiée. En attente de la confirmation du réseau.',
+      data: {
+        transaction,
+        wallet
+      },
     });
   } catch (error: any) {
     next(error);
@@ -128,7 +113,7 @@ export const depositToWallet = async (req: AuthRequest, res: Response, next: Nex
 };
 
 /**
- * Initier un retrait depuis le portefeuille vers Mobile Money
+ * Initier un retrait (Vérifie le solde actuel et place la transaction en PENDING)
  */
 export const withdrawFromWallet = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -139,7 +124,6 @@ export const withdrawFromWallet = async (req: AuthRequest, res: Response, next: 
       return next(new AppError('Utilisateur non authentifié.', 401));
     }
 
-    // Gestion intelligente du format de données reçu du front-end
     let finalAmountUSD = 0;
     let finalAmountCDF = 0;
 
@@ -159,13 +143,11 @@ export const withdrawFromWallet = async (req: AuthRequest, res: Response, next: 
       return next(new AppError('Le montant du retrait doit être supérieur à zéro.', 400));
     }
 
-    // Récupérer le portefeuille de l'utilisateur
     const wallet = await prisma.wallet.findUnique({ where: { userId } });
     if (!wallet) {
       return next(new AppError('Portefeuille introuvable.', 404));
     }
 
-    // Vérifier si l'utilisateur possède un solde suffisant
     if (finalAmountUSD > 0 && wallet.balanceUSD < finalAmountUSD) {
       return next(new AppError('Solde USD insuffisant pour effectuer ce retrait.', 400));
     }
@@ -173,8 +155,9 @@ export const withdrawFromWallet = async (req: AuthRequest, res: Response, next: 
       return next(new AppError('Solde CDF insuffisant pour effectuer ce retrait.', 400));
     }
 
-    // Enregistrer la transaction de retrait (souvent en PENDING en attendant la validation de l'opérateur)
-    await prisma.transaction.create({
+    // Enregistrement de la demande de retrait en PENDING pour l'AdminFinanceDashboard
+    // Le solde peut être bloqué ou déduit uniquement après confirmation (selon votre logique métier, ici on trace juste la demande)
+    const transaction = await prisma.transaction.create({
       data: {
         walletId: wallet.id,
         amountUSD: finalAmountUSD,
@@ -186,25 +169,13 @@ export const withdrawFromWallet = async (req: AuthRequest, res: Response, next: 
       },
     });
 
-    // Déduire les montants du solde du portefeuille
-    const updatedWallet = await prisma.wallet.update({
-      where: { id: wallet.id },
-      data: {
-        balanceUSD: { decrement: finalAmountUSD },
-        balanceCDF: { decrement: finalAmountCDF },
-      },
-      include: { 
-        transactions: {
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        } 
-      },
-    });
-
     res.status(200).json({
       success: true,
-      message: 'Demande de retrait enregistrée avec succès.',
-      data: updatedWallet,
+      message: 'Demande de retrait enregistrée. En attente de validation opérateur/admin.',
+      data: {
+        transaction,
+        wallet
+      },
     });
   } catch (error: any) {
     next(error);
