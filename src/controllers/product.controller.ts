@@ -75,17 +75,14 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     const validStates = ['NEW', 'LIKE_NEW', 'GOOD', 'ACCEPTABLE'];
     const productState = validStates.includes(state) ? state : 'GOOD';
 
-    // Gestion des images (fichier unique ou multiple via Multer)
+    // Gestion des images via Cloudinary (récupération de file.path)
     let imageUrls: string[] = [];
     const files = req.files as Express.Multer.File[];
+    
     if (files && Array.isArray(files) && files.length > 0) {
-      const host = req.get('host');
-      const protocol = req.protocol;
-      imageUrls = files.map(file => `${protocol}://${host}/uploads/${file.filename}`);
+      imageUrls = files.map(file => file.path);
     } else if (req.file) {
-      const host = req.get('host');
-      const protocol = req.protocol;
-      imageUrls = [`${protocol}://${host}/uploads/${req.file.filename}`];
+      imageUrls = [(req.file as any).path];
     } else if (req.body.images) {
       imageUrls = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
     }
