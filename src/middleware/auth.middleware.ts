@@ -53,3 +53,6 @@ export const restrictTo = (...roles: Role[]) => {
     next();
   };
 };
+
+// Alias pour assurer la compatibilité avec les routes qui importent authMiddleware
+export const authMiddleware = protect;

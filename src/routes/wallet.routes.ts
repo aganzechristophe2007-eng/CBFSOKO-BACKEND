@@ -1,19 +1,22 @@
-import { Router } from 'express';
-import { getMyWallet, depositToWallet, withdrawFromWallet } from '../controllers/wallet.controller';
-import { protect } from '../middleware/auth.middleware';
+import { Router, RequestHandler } from 'express';
+import { authMiddleware } from '../middleware/auth.middleware';
+import { 
+  getWalletData, 
+  processTransaction, 
+  getTransactionStats, 
+  handleAggregatorWebhook 
+} from '../controllers/wallet.controller';
 
 const router = Router();
 
-// Toutes les routes du portefeuille nécessitent d'être authentifié
-router.use(protect);
+// Webhook public (sans middleware)
+router.post('/webhook', handleAggregatorWebhook as unknown as RequestHandler);
 
-// Consulter son propre portefeuille
-router.get('/', getMyWallet);
+// Application propre du middleware d'authentification pour sécuriser le reste du routeur
+router.use(authMiddleware as unknown as RequestHandler);
 
-// Recharger son portefeuille (dépôt)
-router.post('/deposit', depositToWallet);
-
-// Effectuer un retrait depuis le portefeuille
-router.post('/withdraw', withdrawFromWallet);
+router.get('/me', getWalletData as unknown as RequestHandler);
+router.get('/statistics', getTransactionStats as unknown as RequestHandler);
+router.post('/transaction', processTransaction as unknown as RequestHandler);
 
 export default router;

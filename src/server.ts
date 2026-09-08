@@ -2,6 +2,7 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';
 import { errorMiddleware } from './middleware/error.middleware';
+import passport from 'passport';
 
 // Utilisation d'un namespace import pour forcer la récupération du routeur sous-jacent
 import * as authRoutesModule from './routes/auth.routes';
@@ -12,6 +13,7 @@ import * as orderRoutesModule from './routes/orderRoutes';
 import * as walletRoutesModule from './routes/wallet.routes';
 import * as messageRoutesModule from './routes/message.routes';
 import * as notificationRoutesModule from './routes/notification.routes';
+
 const notificationRoutes = (notificationRoutesModule as any).default || notificationRoutesModule;
 const authRoutes = (authRoutesModule as any).default || authRoutesModule;
 const productRoutes = (productRoutesModule as any).default || productRoutesModule;
@@ -30,9 +32,10 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Initialisation indispensable de Passport pour Google/Facebook OAuth
+app.use(passport.initialize());
+
 // Rendre le dossier 'uploads' accessible publiquement
-// IMPORTANT : ce chemin doit correspondre exactement à `uploadDir` défini dans auth.routes.ts
-// (path.join(process.cwd(), 'public', 'uploads')), sinon les avatars uploadés retournent une 404.
 app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')));
 
 app.use('/api/auth', authRoutes);
