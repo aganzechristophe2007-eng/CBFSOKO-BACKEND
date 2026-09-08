@@ -245,7 +245,55 @@ router.post('/login', login as unknown as RequestHandler);
 router.get('/me', protect as unknown as RequestHandler, getMe as unknown as RequestHandler);
 router.put('/update-profile', protect as unknown as RequestHandler, upload.any(), updateProfileInline as unknown as RequestHandler);
 
-// --- Routes d'authentification Sociale (Google) ---
+// --- Route Google pour l'Application Mobile (POST) ---
+router.post('/google', (async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { email, name, avatar } = req.body;
+
+    if (!email) {
+      return next(new AppError('Email non fourni par Google.', 400));
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    let user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+
+    if (!user) {
+      let assignedRole: Role = Role.USER;
+      if (normalizedEmail === 'benjaminkulimushi1@gmail.com') {
+        assignedRole = Role.ADMIN;
+      } else if (normalizedEmail === 'mambofelicien91@gmail.com') {
+        assignedRole = 'ADMIN_FINANCE' as Role;
+      }
+
+      user = await prisma.user.create({
+        data: {
+          name: name ? name.trim() : 'Utilisateur Google',
+          email: normalizedEmail,
+          passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
+          role: assignedRole,
+          avatar: avatar || null
+        }
+      });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, userId: user.id, role: user.role },
+      process.env.JWT_SECRET || 'secret_default',
+      { expiresIn: '7d' }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Connexion Google réussie',
+      token,
+      data: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, avatar: user.avatar }
+    });
+  } catch (error) {
+    next(error);
+  }
+}) as unknown as RequestHandler);
+
+// --- Routes d'authentification Sociale (Google Web Redirection) ---
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
 router.get('/google/callback', 
   passport.authenticate('google', { session: false, failureRedirect: `${FRONTEND_URL}/login` }),
