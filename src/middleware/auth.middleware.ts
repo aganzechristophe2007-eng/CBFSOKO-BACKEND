@@ -1,17 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { Role, User } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { AppError } from '../utils/AppError';
 import 'multer'; // <--- Import indispensable pour que TypeScript reconnaisse Express.Multer.File
 
-// Interface étendue assouplie pour éviter les conflits de types avec Prisma et les autres routes
+// Interface assouplie pour éliminer les conflits de typage stricts avec les routes
 export interface AuthRequest extends Request {
-  user?: {
-    id?: string;
-    userId?: string;
-    role: Role;
-    [key: string]: any;
-  } | User;
+  user?: any;
   userId?: string;
   file?: Express.Multer.File;
 }
