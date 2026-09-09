@@ -1,8 +1,32 @@
 import { Router, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { protect, AuthRequest } from '../middleware/auth.middleware';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 
 const router = Router();
+
+// Configuration de Multer pour stocker les fichiers dans public/uploads
+const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 } // Limite à 50 Mo pour les vidéos/audios
+});
 
 // ==========================================
 // SECTION : GESTION DES DEMANDES DE CONTACT
@@ -237,7 +261,7 @@ router.post('/support-chat', protect, async (req: AuthRequest, res: Response) =>
 });
 
 // ==========================================
-// SECTION : GESTION DES MESSAGES
+// SECTION : GESTION DES MESSAGES & MÉDIAS
 // ==========================================
 
 // 1. Routes GET statiques en premier (évite les conflits avec :otherUserId)
@@ -394,6 +418,7 @@ router.post('/mark-read', protect, async (req: AuthRequest, res: Response) => {
   }
 });
 
+// Route POST pour l'envoi de messages texte
 router.post('/', protect, async (req: AuthRequest, res: Response) => {
   try {
     const { receiverId, content } = req.body;
@@ -434,6 +459,65 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
         senderId,
         receiverId,
         content,
+        isRead: false
+      },
+      include: {
+        sender: { select: { id: true, name: true, avatar: true } },
+        receiver: { select: { id: true, name: true, avatar: true } }
+      }
+    });
+
+    return res.status(201).json({ success: true, data: newMessage });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Nouvelle route POST pour l'envoi de fichiers médias (Photos, Vidéos, Audios)
+router.post('/media', protect, upload.single('media'), async (req: AuthRequest, res: Response) => {
+  try {
+    const senderId = req.user?.id;
+    const userRole = req.user?.role;
+    const { receiverId } = req.body;
+    const file = req.file;
+
+    if (!senderId) {
+      return res.status(401).json({ success: false, message: "Utilisateur non authentifié." });
+    }
+
+    if (!receiverId || !file) {
+      return res.status(400).json({ success: false, message: "Destinataire et fichier multimédia requis." });
+    }
+
+    const isAdminOrFinance = ['ADMIN', 'SUPER_ADMIN', 'ADMIN_FINANCE'].includes(userRole || '');
+
+    if (!isAdminOrFinance) {
+      const isConnected = await prisma.contactRequest.findFirst({
+        where: {
+          status: 'ACCEPTED',
+          OR: [
+            { senderId: senderId, receiverId: receiverId },
+            { senderId: receiverId, receiverId: senderId }
+          ]
+        }
+      });
+
+      if (!isConnected) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Vous devez d'abord être en contact pour envoyer des fichiers." 
+        });
+      }
+    }
+
+    // Le chemin relatif stocké dans la base, accessible via /uploads/...
+    const fileUrl = `uploads/${file.filename}`;
+
+    const newMessage = await prisma.message.create({
+      data: {
+        senderId,
+        receiverId,
+        content: fileUrl,
         isRead: false
       },
       include: {
@@ -498,6 +582,5 @@ async function createNotificationForReceiver(senderId: string, receiverId: strin
     }
   });
 }
-
 
 export default router;
