@@ -15,7 +15,8 @@ import { prisma } from '../lib/prisma';
 
 const router = Router();
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://cbfsoko-bukavu.vercel.app';
+// Nettoyage automatique du slash de fin pour éviter les erreurs de redirection (ex: double slash //)
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://cbfsoko-bukavu.vercel.app').replace(/\/$/, '');
 
 // --- Configuration de Passport (Google OAuth) sécurisée ---
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
