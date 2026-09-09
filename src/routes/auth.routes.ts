@@ -17,83 +17,87 @@ const router = Router();
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://cbfsoko-bukavu.vercel.app';
 
-// --- Configuration de Passport (Google OAuth) ---
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/google/callback'
-  },
-  async (accessToken, refreshToken, profile, done) => {
-    try {
-      const email = profile.emails && profile.emails[0] ? profile.emails[0].value.trim().toLowerCase() : null;
-      if (!email) {
-        return done(new Error("Aucun email trouvé via le compte Google."), undefined);
-      }
-
-      let user = await prisma.user.findUnique({ where: { email } });
-
-      if (!user) {
-        let assignedRole: Role = Role.USER;
-        if (email === 'benjaminkulimushi1@gmail.com') {
-          assignedRole = Role.ADMIN;
-        } else if (email === 'mambofelicien91@gmail.com') {
-          assignedRole = 'ADMIN_FINANCE' as Role;
+// --- Configuration de Passport (Google OAuth) sécurisée ---
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/google/callback'
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        const email = profile.emails && profile.emails[0] ? profile.emails[0].value.trim().toLowerCase() : null;
+        if (!email) {
+          return done(new Error("Aucun email trouvé via le compte Google."), undefined);
         }
 
-        user = await prisma.user.create({
-          data: {
-            name: profile.displayName || 'Utilisateur Google',
-            email: email,
-            passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
-            role: assignedRole,
-            avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : null
+        let user = await prisma.user.findUnique({ where: { email } });
+
+        if (!user) {
+          let assignedRole: Role = Role.USER;
+          if (email === 'benjaminkulimushi1@gmail.com') {
+            assignedRole = Role.ADMIN;
+          } else if (email === 'mambofelicien91@gmail.com') {
+            assignedRole = 'ADMIN_FINANCE' as Role;
           }
-        });
-      }
-      return done(null, user);
-    } catch (error) {
-      return done(error, undefined);
-    }
-  }
-));
 
-// --- Configuration de Passport (Facebook OAuth) ---
-passport.use(new FacebookStrategy({
-    clientID: process.env.FACEBOOK_APP_ID || '',
-    clientSecret: process.env.FACEBOOK_APP_SECRET || '',
-    callbackURL: process.env.FACEBOOK_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/facebook/callback',
-    profileFields: ['id', 'displayName', 'emails', 'photos']
-  },
-  async (accessToken, refreshToken, profile, done) => {
-    try {
-      const email = profile.emails && profile.emails[0] ? profile.emails[0].value.trim().toLowerCase() : `${profile.id}@facebook.tmp`;
-      
-      let user = await prisma.user.findUnique({ where: { email } });
-
-      if (!user) {
-        let assignedRole: Role = Role.USER;
-        if (email === 'benjaminkulimushi1@gmail.com') {
-          assignedRole = Role.ADMIN;
-        } else if (email === 'mambofelicien91@gmail.com') {
-          assignedRole = 'ADMIN_FINANCE' as Role;
+          user = await prisma.user.create({
+            data: {
+              name: profile.displayName || 'Utilisateur Google',
+              email: email,
+              passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
+              role: assignedRole,
+              avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : null
+            }
+          });
         }
-
-        user = await prisma.user.create({
-          data: {
-            name: profile.displayName || 'Utilisateur Facebook',
-            email: email,
-            passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
-            role: assignedRole,
-            avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : null
-          }
-        });
+        return done(null, user);
+      } catch (error) {
+        return done(error, undefined);
       }
-      return done(null, user);
-    } catch (error) {
-      return done(error, undefined);
     }
-  }
-));
+  ));
+}
+
+// --- Configuration de Passport (Facebook OAuth) sécurisée ---
+if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
+  passport.use(new FacebookStrategy({
+      clientID: process.env.FACEBOOK_APP_ID,
+      clientSecret: process.env.FACEBOOK_APP_SECRET,
+      callbackURL: process.env.FACEBOOK_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/facebook/callback',
+      profileFields: ['id', 'displayName', 'emails', 'photos']
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        const email = profile.emails && profile.emails[0] ? profile.emails[0].value.trim().toLowerCase() : `${profile.id}@facebook.tmp`;
+        
+        let user = await prisma.user.findUnique({ where: { email } });
+
+        if (!user) {
+          let assignedRole: Role = Role.USER;
+          if (email === 'benjaminkulimushi1@gmail.com') {
+            assignedRole = Role.ADMIN;
+          } else if (email === 'mambofelicien91@gmail.com') {
+            assignedRole = 'ADMIN_FINANCE' as Role;
+          }
+
+          user = await prisma.user.create({
+            data: {
+              name: profile.displayName || 'Utilisateur Facebook',
+              email: email,
+              passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
+              role: assignedRole,
+              avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : null
+            }
+          });
+        }
+        return done(null, user);
+      } catch (error) {
+        return done(error, undefined);
+      }
+    }
+  ));
+}
 
 // --- Configuration de Multer pour stocker l'avatar dans public/uploads ---
 const uploadDir = path.join(process.cwd(), 'public', 'uploads');
