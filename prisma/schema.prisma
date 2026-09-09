@@ -280,7 +280,7 @@ model Notification {
   message   String
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
-
+  status    String   @default("PENDING") // Ou ton type/enum personnalisé
   @@index([userId])
   @@index([senderId])
 }

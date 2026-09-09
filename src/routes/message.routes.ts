@@ -158,35 +158,6 @@ router.patch('/request/by-sender/:senderId', protect, async (req: AuthRequest, r
   }
 });
 
-router.get('/contacts/accepted', protect, async (req: AuthRequest, res: Response) => {
-  try {
-    const currentUserId = req.user?.id;
-    if (!currentUserId) return res.status(401).json({ success: false, message: "Non authentifié" });
-
-    const requests = await prisma.contactRequest.findMany({
-      where: {
-        status: 'ACCEPTED',
-        OR: [
-          { senderId: currentUserId },
-          { receiverId: currentUserId }
-        ]
-      },
-      include: {
-        sender: { select: { id: true, name: true, email: true, avatar: true, role: true, updatedAt: true } },
-        receiver: { select: { id: true, name: true, email: true, avatar: true, role: true, updatedAt: true } }
-      }
-    });
-
-    const contacts = requests.map(req => 
-      req.senderId === currentUserId ? req.receiver : req.sender
-    );
-
-    return res.json({ success: true, data: contacts });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-});
-
 // ==========================================
 // SECTION : SERVICE CLIENT / SUPPORT AUTOMATISÉ (ADMIN)
 // ==========================================
@@ -269,7 +240,7 @@ router.post('/support-chat', protect, async (req: AuthRequest, res: Response) =>
 // SECTION : GESTION DES MESSAGES
 // ==========================================
 
-// Route dédiée et sécurisée pour compter les messages non lus reçus par l'utilisateur connecté
+// 1. Routes GET statiques en premier (évite les conflits avec :otherUserId)
 router.get('/unread-count', protect, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user?.id;
@@ -290,55 +261,30 @@ router.get('/unread-count', protect, async (req: AuthRequest, res: Response) => 
   }
 });
 
-// Route POST pour marquer explicitement tous les messages reçus comme lus
-router.post('/mark-read', protect, async (req: AuthRequest, res: Response) => {
+router.get('/contacts/accepted', protect, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user?.id;
-    if (!currentUserId) {
-      return res.status(401).json({ success: false, message: "Non authentifié" });
-    }
+    if (!currentUserId) return res.status(401).json({ success: false, message: "Non authentifié" });
 
-    const { senderId } = req.body; // Optionnel : si on veut marquer les messages d'un expéditeur spécifique
-
-    await prisma.message.updateMany({
+    const requests = await prisma.contactRequest.findMany({
       where: {
-        receiverId: currentUserId,
-        ...(senderId ? { senderId } : {}),
-        isRead: false
-      },
-      data: {
-        isRead: true
-      }
-    });
-
-    return res.json({ success: true, message: "Messages marqués comme lus." });
-  } catch (error: any) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-router.get('/', protect, async (req: AuthRequest, res: Response) => {
-  try {
-    const currentUserId = req.user?.id;
-    if (!currentUserId) {
-      return res.status(401).json({ success: false, message: "Utilisateur non authentifié." });
-    }
-
-    const messages = await prisma.message.findMany({
-      where: {
+        status: 'ACCEPTED',
         OR: [
           { senderId: currentUserId },
           { receiverId: currentUserId }
         ]
       },
-      orderBy: { createdAt: 'asc' },
       include: {
-        sender: { select: { id: true, name: true, avatar: true } },
-        receiver: { select: { id: true, name: true, avatar: true } }
+        sender: { select: { id: true, name: true, email: true, avatar: true, role: true, updatedAt: true } },
+        receiver: { select: { id: true, name: true, email: true, avatar: true, role: true, updatedAt: true } }
       }
     });
 
-    return res.json({ success: true, data: messages });
+    const contacts = requests.map(req => 
+      req.senderId === currentUserId ? req.receiver : req.sender
+    );
+
+    return res.json({ success: true, data: contacts });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -388,6 +334,61 @@ router.get('/users/available', protect, async (req: AuthRequest, res: Response) 
     });
 
     return res.json({ success: true, data: usersWithStatus });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Route GET globale des messages
+router.get('/', protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Utilisateur non authentifié." });
+    }
+
+    const messages = await prisma.message.findMany({
+      where: {
+        OR: [
+          { senderId: currentUserId },
+          { receiverId: currentUserId }
+        ]
+      },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        sender: { select: { id: true, name: true, avatar: true } },
+        receiver: { select: { id: true, name: true, avatar: true } }
+      }
+    });
+
+    return res.json({ success: true, data: messages });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Route POST pour marquer explicitement tous les messages reçus comme lus
+router.post('/mark-read', protect, async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Non authentifié" });
+    }
+
+    const { senderId } = req.body; 
+
+    await prisma.message.updateMany({
+      where: {
+        receiverId: currentUserId,
+        ...(senderId ? { senderId } : {}),
+        isRead: false
+      },
+      data: {
+        isRead: true
+      }
+    });
+
+    return res.json({ success: true, message: "Messages marqués comme lus." });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -447,6 +448,7 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
   }
 });
 
+// 2. Route dynamique avec paramètre en dernier
 router.get('/:otherUserId', protect, async (req: AuthRequest, res: Response) => {
   try {
     const currentUserId = req.user?.id;
@@ -456,7 +458,6 @@ router.get('/:otherUserId', protect, async (req: AuthRequest, res: Response) => 
       return res.status(401).json({ success: false, message: "Utilisateur non authentifié." });
     }
 
-    // Marquer automatiquement les messages reçus de cet utilisateur comme lus lorsqu'on ouvre la discussion
     await prisma.message.updateMany({
       where: {
         senderId: otherUserId,
