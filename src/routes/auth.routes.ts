@@ -15,34 +15,28 @@ import { prisma } from '../lib/prisma';
 
 const router = Router();
 
-// Nettoyage automatique du slash de fin pour éviter les erreurs de redirection
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://cbfsoko-bukavu.vercel.app').replace(/\/$/, '');
 
-// --- Configuration de Passport (Google OAuth) sécurisée avec gestion du mode ---
+// --- Configuration de Passport (Google OAuth avec Cloudinary) ---
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   passport.use(new GoogleStrategy({
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/google/callback',
-      passReqToCallback: true // Permet de récupérer req pour lire le mode (register / login)
+      callbackURL: process.env.GOOGLE_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/google/callback'
     },
-    async (req, accessToken, refreshToken, profile, done) => {
+    async (accessToken, refreshToken, profile, done) => {
       try {
         const email = profile.emails && profile.emails[0] ? profile.emails[0].value.trim().toLowerCase() : null;
         if (!email) {
           return done(new Error("Aucun email trouvé via le compte Google."), undefined);
         }
 
-        // Récupération du mode transmis par le frontend (stocké dans query ou state)
-        const mode = (req.query.state as string) || 'login'; // 'register' ou 'login'
         let user = await prisma.user.findUnique({ where: { email } });
 
-        if (mode === 'register') {
-          if (user) {
-            // Si l'utilisateur existe déjà lors d'une tentative d'inscription -> Erreur bloquante
-            return done(new Error("Cet e-mail possède déjà un compte. Veuillez vous connecter."), undefined);
-          }
+        // Récupération sécurisée de la photo Cloudinary ou Google
+        const avatarUrl = profile.photos && profile.photos[0] ? profile.photos[0].value : null;
 
+        if (!user) {
           let assignedRole: Role = Role.USER;
           if (email === 'benjaminkulimushi1@gmail.com') {
             assignedRole = Role.ADMIN;
@@ -56,13 +50,16 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
               email: email,
               passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
               role: assignedRole,
-              avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : null
+              avatar: avatarUrl
             }
           });
         } else {
-          // Mode connexion : si l'utilisateur n'existe pas encore
-          if (!user) {
-            return done(new Error("Aucun compte trouvé avec cet email. Veuillez d'abord vous inscrire."), undefined);
+          // Met à jour l'avatar si l'utilisateur existe déjà pour garder l'image à jour
+          if (avatarUrl && !user.avatar) {
+            user = await prisma.user.update({
+              where: { email },
+              data: { avatar: avatarUrl }
+            });
           }
         }
 
@@ -74,26 +71,21 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
   ));
 }
 
-// --- Configuration de Passport (Facebook OAuth) sécurisée ---
+// --- Configuration de Passport (Facebook OAuth) ---
 if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
   passport.use(new FacebookStrategy({
       clientID: process.env.FACEBOOK_APP_ID,
       clientSecret: process.env.FACEBOOK_APP_SECRET,
       callbackURL: process.env.FACEBOOK_CALLBACK_URL || 'https://cbfsoko-backend.onrender.com/api/auth/facebook/callback',
-      profileFields: ['id', 'displayName', 'emails', 'photos'],
-      passReqToCallback: true
+      profileFields: ['id', 'displayName', 'emails', 'photos']
     },
-    async (req, accessToken, refreshToken, profile, done) => {
+    async (accessToken, refreshToken, profile, done) => {
       try {
         const email = profile.emails && profile.emails[0] ? profile.emails[0].value.trim().toLowerCase() : `${profile.id}@facebook.tmp`;
-        const mode = (req.query.state as string) || 'login';
         let user = await prisma.user.findUnique({ where: { email } });
+        const avatarUrl = profile.photos && profile.photos[0] ? profile.photos[0].value : null;
 
-        if (mode === 'register') {
-          if (user) {
-            return done(new Error("Cet e-mail possède déjà un compte. Veuillez vous connecter."), undefined);
-          }
-
+        if (!user) {
           let assignedRole: Role = Role.USER;
           if (email === 'benjaminkulimushi1@gmail.com') {
             assignedRole = Role.ADMIN;
@@ -107,15 +99,10 @@ if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
               email: email,
               passwordHash: await bcrypt.hash(Math.random().toString(36), 12),
               role: assignedRole,
-              avatar: profile.photos && profile.photos[0] ? profile.photos[0].value : null
+              avatar: avatarUrl
             }
           });
-        } else {
-          if (!user) {
-            return done(new Error("Aucun compte trouvé. Veuillez vous inscrire."), undefined);
-          }
         }
-
         return done(null, user);
       } catch (error) {
         return done(error, undefined);
@@ -124,7 +111,7 @@ if (process.env.FACEBOOK_APP_ID && process.env.FACEBOOK_APP_SECRET) {
   ));
 }
 
-// --- Configuration de Multer ---
+// --- Configuration Multer (pour les uploads locaux de secours si besoin) ---
 const uploadDir = path.join(process.cwd(), 'public', 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -140,7 +127,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-// --- Contrôleurs classiques Register / Login ---
+// --- Contrôleurs Inscription / Connexion Classiques ---
 const register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { name, email, password, phone } = req.body;
@@ -233,37 +220,26 @@ router.post('/login', login as unknown as RequestHandler);
 router.get('/me', protect as unknown as RequestHandler, getMe as unknown as RequestHandler);
 router.put('/update-profile', protect as unknown as RequestHandler, upload.any(), updateProfileInline as unknown as RequestHandler);
 
-// --- Routes d'authentification Sociale (Google Web Redirection avec transmission du mode via state) ---
-router.get('/google', (req: Request, res: Response, next: NextFunction) => {
-  const mode = req.query.mode || 'login';
-  passport.authenticate('google', { scope: ['profile', 'email'], state: mode as string, session: false })(req, res, next);
-});
-
+// --- Routes Callback Google ---
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
 router.get('/google/callback', 
   passport.authenticate('google', { session: false, failureRedirect: `${FRONTEND_URL}/login?error=Échec+de+l'authentification+Google` }),
   ((req: any, res: Response) => {
     const user = req.user;
     const token = jwt.sign({ id: user.id, userId: user.id, role: user.role }, process.env.JWT_SECRET || 'secret_default', { expiresIn: '7d' });
     const userData = encodeURIComponent(JSON.stringify({ id: user.id, name: user.name, email: user.email, role: user.role }));
-    
-    // Redirection vers le front en passant à la fois le token et l'objet utilisateur
     res.redirect(`${FRONTEND_URL}/login?token=${token}&user=${userData}`);
   }) as unknown as RequestHandler
 );
 
-// --- Routes d'authentification Sociale (Facebook) ---
-router.get('/facebook', (req: Request, res: Response, next: NextFunction) => {
-  const mode = req.query.mode || 'login';
-  passport.authenticate('facebook', { scope: ['email'], state: mode as string, session: false })(req, res, next);
-});
-
+// --- Routes Callback Facebook ---
+router.get('/facebook', passport.authenticate('facebook', { scope: ['email'], session: false }));
 router.get('/facebook/callback', 
   passport.authenticate('facebook', { session: false, failureRedirect: `${FRONTEND_URL}/login?error=Échec+de+l'authentification+Facebook` }),
   ((req: any, res: Response) => {
     const user = req.user;
     const token = jwt.sign({ id: user.id, userId: user.id, role: user.role }, process.env.JWT_SECRET || 'secret_default', { expiresIn: '7d' });
     const userData = encodeURIComponent(JSON.stringify({ id: user.id, name: user.name, email: user.email, role: user.role }));
-    
     res.redirect(`${FRONTEND_URL}/login?token=${token}&user=${userData}`);
   }) as unknown as RequestHandler
 );
