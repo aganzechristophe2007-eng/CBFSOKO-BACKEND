@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { protect, AuthRequest } from '../middleware/auth.middleware';
 import multer from 'multer';
+import { emitToUser } from '../services/socket.service';
 import path from 'path';
 import fs from 'fs';
 
@@ -467,6 +468,9 @@ router.post('/', protect, async (req: AuthRequest, res: Response) => {
       }
     });
 
+    // Notification en temps réel au destinataire via Socket.io
+    emitToUser(receiverId, 'new-message', newMessage);
+
     return res.status(201).json({ success: true, data: newMessage });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
@@ -525,6 +529,9 @@ router.post('/media', protect, upload.single('media'), async (req: AuthRequest, 
         receiver: { select: { id: true, name: true, avatar: true } }
       }
     });
+
+    // Notification en temps réel au destinataire via Socket.io
+    emitToUser(receiverId, 'new-message', newMessage);
 
     return res.status(201).json({ success: true, data: newMessage });
   } catch (error: any) {
