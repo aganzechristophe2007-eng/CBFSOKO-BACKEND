@@ -9,21 +9,24 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Configuration du stockage Cloudinary pour Multer
+// Export de l'instance pour réutilisation ailleurs (avatars, messages, etc.)
+export { cloudinary };
+
+// Configuration du stockage Cloudinary pour les produits
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: async (req, file) => {
     return {
-      folder: 'pimakwanza/products', // Dossier de destination sur ton Cloudinary
+      folder: 'cbfsoko/products',
       allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
-      transformation: [{ width: 1000, height: 1000, crop: 'limit' }], // Optimisation automatique de la taille
+      transformation: [{ width: 1000, height: 1000, crop: 'limit' }],
     };
   },
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 } // Limite à 5 Mo
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
 
 export default upload;

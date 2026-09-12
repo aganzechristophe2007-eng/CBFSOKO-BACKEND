@@ -325,7 +325,14 @@ enum TransactionStatus {
   SUCCESS
   FAILED
 }
+model Follow {
+  id          String   @id @default(uuid())
+  followerId  String   // Celui qui s'abonne
+  followingId String   // La boutique / le vendeur suivi
+  createdAt   DateTime @default(now())
 
+  @@unique([followerId, followingId]) // Empêche de s'abonner 2 fois au même
+}
 model Deposit {
   id          String          @id @default(uuid())
   userId      String        

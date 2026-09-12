@@ -16,8 +16,10 @@ import * as orderRoutesModule from './routes/orderRoutes';
 import * as walletRoutesModule from './routes/wallet.routes';
 import * as messageRoutesModule from './routes/message.routes';
 import * as notificationRoutesModule from './routes/notification.routes';
- 
+import * as followRoutesModule from './routes/follow.routes'; // <-- CORRECTION : pointé vers ton fichier de follow
+
 const notificationRoutes = (notificationRoutesModule as any).default || notificationRoutesModule;
+const followRoutes = (followRoutesModule as any).default || followRoutesModule;      
 const authRoutes = (authRoutesModule as any).default || authRoutesModule;
 const productRoutes = (productRoutesModule as any).default || productRoutesModule;
 const adminRoutes = (adminRoutesModule as any).default || adminRoutesModule;
@@ -56,6 +58,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api', followRoutes); // <-- BRANCHEMENT : Ajouté ici pour tes routes /api/users/:id/follow et /api/feed/following
  
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'OK', project: 'CBFSOKO API', version: '1.0.0' });
