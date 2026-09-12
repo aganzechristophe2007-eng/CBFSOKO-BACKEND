@@ -28,7 +28,7 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
-// Récupérer un produit spécifique par son ID (C'est celle-ci qui manquait)
+// Récupérer un produit spécifique par son ID
 export const getProductById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
@@ -99,12 +99,22 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     const validStates = ['NEW', 'LIKE_NEW', 'GOOD', 'ACCEPTABLE'];
     const productState = validStates.includes(state) ? state : 'GOOD';
 
-    // Gestion des images via Cloudinary (récupération de file.path)
+    // Gestion robuste et typée des fichiers (images et vidéo)
     let imageUrls: string[] = [];
-    const files = req.files as Express.Multer.File[];
-    
-    if (files && Array.isArray(files) && files.length > 0) {
-      imageUrls = files.map(file => file.path);
+    let videoUrl: string | null = null;
+
+    const uploadedFiles = req.files as { [fieldname: string]: Express.Multer.File[] } | Express.Multer.File[] | undefined;
+
+    if (uploadedFiles && !Array.isArray(uploadedFiles)) {
+      const filesMap = uploadedFiles;
+      if (filesMap.images && filesMap.images.length > 0) {
+        imageUrls = filesMap.images.map(file => file.path);
+      }
+      if (filesMap.video && filesMap.video.length > 0) {
+        videoUrl = filesMap.video[0].path;
+      }
+    } else if (uploadedFiles && Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
+      imageUrls = uploadedFiles.map(file => file.path);
     } else if (req.file) {
       imageUrls = [(req.file as any).path];
     } else if (req.body.images) {
@@ -129,6 +139,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
         sellerId: userId,
         type: type || 'SALE',
         images: imageUrls,
+        videoUrl: videoUrl, // <-- Enregistrement sécurisé de la capsule vidéo
         durationMode: durationMode || 'FREE_24H',
         ...(expiresAt && { expiresAt: new Date(expiresAt) }),
         ...(shopId && { shopId }),
@@ -140,7 +151,7 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
 
     res.status(201).json({
       success: true,
-      message: 'Produit créé avec succès',
+      message: 'Produit et sa capsule vidéo créés avec succès',
       data: newProduct,
     });
   } catch (error: any) {
