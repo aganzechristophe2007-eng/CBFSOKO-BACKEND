@@ -127,6 +127,7 @@ model Product {
   priceUSD      Float
   state         ProductState  @default(NEW)
   quantity      Int           @default(1)
+  videoUrl    String?
   images        String[]
   categoryId    String
   category      Category      @relation(fields: [categoryId], references: [id])
