@@ -149,9 +149,9 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
     if (name) updateData.name = name.trim();
     if (phone !== undefined) updateData.phone = phone ? phone.trim() : null;
 
-    // Récupération sécurisée du fichier uploadé via Multer (champ 'avatar')
+    // Utilisation directe de req.file.path (qui contient l'URL sécurisée Cloudinary)
     if (req.file) {
-      updateData.avatar = `/uploads/${req.file.filename}`;
+      updateData.avatar = (req.file as any).path;
     }
 
     const updatedUser = await prisma.user.update({
