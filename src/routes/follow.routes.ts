@@ -50,15 +50,15 @@ router.post('/users/:id/follow', protect, async (req: any, res: Response) => {
 // 2. Récupérer le flux (feed) des produits des utilisateurs suivis
 router.get('/feed/following', protect, async (req: any, res: Response) => {
   try {
-    const userId = req.user?.id || req.user?._id;
+    const sellerId = req.user?.id || req.user?._id;
 
-    if (!userId) {
+    if (!sellerId) {
       return res.status(401).json({ error: "Utilisateur non authentifié." });
     }
 
     // Récupérer la liste des IDs suivis
     const follows = await prisma.follow.findMany({
-      where: { followerId: userId },
+      where: { followerId: sellerId },
       select: { followingId: true }
     });
 
@@ -73,7 +73,7 @@ router.get('/feed/following', protect, async (req: any, res: Response) => {
       where: {
         OR: [
           { sellerId: { in: followingIds } },
-          { userId: { in: followingIds } }
+          { sellerId: { in: followingIds } }
         ]
       },
       orderBy: { createdAt: 'desc' },
