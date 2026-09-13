@@ -5,8 +5,10 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { errorMiddleware } from './middleware/error.middleware';
+import { protect, restrictTo } from './middleware/auth.middleware';
+import { Role } from '@prisma/client';
 import passport from 'passport';
- 
+
 // Utilisation d'un namespace import pour forcer la récupération du routeur sous-jacent
 import * as authRoutesModule from './routes/auth.routes';
 import * as productRoutesModule from './routes/product.routes';
@@ -27,63 +29,73 @@ const categoryRoutes = (categoryRoutesModule as any).default || categoryRoutesMo
 const orderRoutes = (orderRoutesModule as any).default || orderRoutesModule;
 const walletRoutes = (walletRoutesModule as any).default || walletRoutesModule;
 const messageRoutes = (messageRoutesModule as any).default || messageRoutesModule;
- 
+
 const app: Application = express();
 const server = http.createServer(app);
- 
+
 // === Middlewares globaux ===
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(passport.initialize());
- 
+
 // S'assurer que le dossier public/uploads existe physiquement sur le serveur
 const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
- 
+
 // Exposer le dossier uploads pour que le frontend puisse charger les images/avatars
 app.use('/uploads', express.static(uploadsDir));
- 
+
 // Configuration de Socket.io pour la messagerie en temps réel et les appels audio/vidéo
 initSocket(server);
- 
+
 // === Montage des routes ===
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/admin', adminRoutes);
+
+// SÉCURITÉ : admin.routes.ts ne vérifie ni l'authentification ni le rôle en interne
+// (suppression d'utilisateurs, portefeuilles, transactions de TOUS les utilisateurs...).
+// On verrouille donc l'accès ici, au montage, aux seuls rôles administrateurs.
+app.use(
+  '/api/admin',
+  protect as unknown as express.RequestHandler,
+  restrictTo(Role.ADMIN, Role.SUPER_ADMIN, Role.ADMIN_FINANCE) as unknown as express.RequestHandler,
+  adminRoutes
+);
+
 app.use('/api/categories', categoryRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api', followRoutes); // <-- BRANCHEMENT : Ajouté ici pour tes routes /api/users/:id/follow et /api/feed/following
- 
+app.use('/api', followRoutes); // <-- BRANCHEMENT : Ajouté ici pour tes routes /api/sellers/:id/follow et /api/follows/me
+
 app.get('/api/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'OK', project: 'CBFSOKO API', version: '1.0.0' });
 });
- 
+
 app.get('/', (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'API CBFSOKO en ligne 🚀'
   });
 });
- 
+
 app.all('*', (req: Request, res: Response, next: NextFunction) => {
   res.status(404).json({
     success: false,
     message: `Impossible de trouver ${req.originalUrl} sur ce serveur !`
   });
 });
- 
+
 app.use(errorMiddleware);
- 
+
 const PORT = process.env.PORT || 5000;
- 
+
 server.listen(PORT, () => {
   console.log(`Serveur CBFSOKO démarré et en ligne sur le port ${PORT}`);
 });
- 
+
 export default app;

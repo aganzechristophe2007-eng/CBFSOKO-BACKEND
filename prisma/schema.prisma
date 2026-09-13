@@ -160,6 +160,9 @@ model Product {
   expiresAt     DateTime?     
   isSold        Boolean       @default(false) 
 
+  // Produit officiel CBF publiÃ© depuis la page Admin â€” visible sur "Nos produits" et revendable avec commission
+  isOfficial    Boolean       @default(false)
+
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -171,6 +174,7 @@ model Product {
   @@index([categoryId])
   @@index([sellerId])
   @@index([status])
+  @@index([isOfficial])
 }
 
 model Order {
@@ -296,7 +300,7 @@ model Notification {
   message   String
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
-  status    String   @default("PENDING") // Ou ton type/enum personnalisé
+  status    String   @default("PENDING") // Ou ton type/enum personnalisÃ©
   @@index([userId])
   @@index([senderId])
 }
@@ -348,7 +352,7 @@ model Follow {
   followingId String   // La boutique / le vendeur suivi
   createdAt   DateTime @default(now())
 
-  @@unique([followerId, followingId]) // Empêche de s'abonner 2 fois au même
+  @@unique([followerId, followingId]) // EmpÃªche de s'abonner 2 fois au mÃªme
 }
 model Deposit {
   id          String          @id @default(uuid())

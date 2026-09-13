@@ -194,4 +194,154 @@ router.patch('/boutiques/:id/reject', async (req, res, next) => {
   }
 });
 
+// 8. Vue d'ensemble des portefeuilles de TOUS les utilisateurs (Admin Finances)
+router.get('/wallets', async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        phone: true,
+        createdAt: true,
+        wallet: { select: { id: true, balanceUSD: true, balanceCDF: true, updatedAt: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const data = users.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      phone: u.phone,
+      balanceUSD: u.wallet?.balanceUSD || 0,
+      balanceCDF: u.wallet?.balanceCDF || 0,
+      walletId: u.wallet?.id || null,
+      updatedAt: u.wallet?.updatedAt || null,
+    }));
+
+    const totals = data.reduce(
+      (acc, u) => {
+        acc.totalBalanceUSD += u.balanceUSD;
+        acc.totalBalanceCDF += u.balanceCDF;
+        return acc;
+      },
+      { totalBalanceUSD: 0, totalBalanceCDF: 0 }
+    );
+
+    res.json({ success: true, data, totals });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 9. Toutes les transactions de tous les utilisateurs (Admin Finances)
+router.get('/transactions', async (req, res, next) => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 200;
+    const skip = (page - 1) * limit;
+
+    const transactions = await prisma.transaction.findMany({
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        wallet: {
+          include: { user: { select: { id: true, name: true, email: true, role: true } } },
+        },
+      },
+    });
+
+    const data = transactions.map((t) => ({
+      id: t.id,
+      type: t.type,
+      status: t.status,
+      provider: t.provider,
+      reference: t.reference,
+      amountUSD: t.amountUSD,
+      amountCDF: t.amountCDF,
+      createdAt: t.createdAt,
+      user: t.wallet?.user
+        ? {
+            id: t.wallet.user.id,
+            name: t.wallet.user.name,
+            email: t.wallet.user.email,
+            role: t.wallet.user.role,
+          }
+        : null,
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 10. Statistiques financières globales : circulation de l'argent + gains de la plateforme (graphique)
+router.get('/finance-stats', async (req, res, next) => {
+  try {
+    const range = String(req.query.range || '30d');
+    const days = range === '7d' ? 7 : range === '90d' ? 90 : 30;
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const [wallets, transactions] = await Promise.all([
+      prisma.wallet.findMany({ select: { balanceUSD: true, balanceCDF: true } }),
+      prisma.transaction.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const totalCirculatingUSD = wallets.reduce((sum, w) => sum + w.balanceUSD, 0);
+    const totalCirculatingCDF = wallets.reduce((sum, w) => sum + w.balanceCDF, 0);
+
+    const successTxs = transactions.filter((t) => t.status === 'SUCCESS');
+    const totalDeposits = successTxs
+      .filter((t) => t.type === 'DEPOSIT')
+      .reduce((sum, t) => sum + (t.amountUSD || t.amountCDF || 0), 0);
+    const totalWithdrawals = successTxs
+      .filter((t) => t.type === 'WITHDRAWAL')
+      .reduce((sum, t) => sum + (t.amountUSD || t.amountCDF || 0), 0);
+
+    // Frais / gains de la plateforme : même taux (1.5%) que le calcul individuel du wallet utilisateur
+    const platformEarnings = totalDeposits * 0.015;
+
+    const totalTxsCount = transactions.length;
+    const failedTxsCount = transactions.filter((t) => t.status === 'FAILED').length;
+    const failureRate = totalTxsCount > 0 ? ((failedTxsCount / totalTxsCount) * 100).toFixed(1) : '0';
+
+    const chartDataMap = new Map<string, { depots: number; retraits: number }>();
+    transactions.forEach((t) => {
+      const dateStr = new Date(t.createdAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      const current = chartDataMap.get(dateStr) || { depots: 0, retraits: 0 };
+      const amount = t.amountUSD || t.amountCDF || 0;
+      if (t.type === 'DEPOSIT') current.depots += amount;
+      if (t.type === 'WITHDRAWAL') current.retraits += amount;
+      chartDataMap.set(dateStr, current);
+    });
+
+    const chartData = Array.from(chartDataMap, ([date, v]) => ({ date, ...v }));
+
+    res.json({
+      success: true,
+      data: {
+        totalCirculatingUSD,
+        totalCirculatingCDF,
+        totalDeposits,
+        totalWithdrawals,
+        platformEarnings,
+        failureRate: Number(failureRate),
+        totalUsers: wallets.length,
+        chartData: chartData.length > 0 ? chartData : [{ date: "Aujourd'hui", depots: 0, retraits: 0 }],
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

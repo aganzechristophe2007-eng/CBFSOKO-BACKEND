@@ -11,7 +11,15 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
     const limit = Number(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
+    // Filtre "produits officiels CBF" utilisé par la page /nos-produits
+    const { official } = req.query;
+    const where: any = {};
+    if (official === 'true') {
+      where.isOfficial = true;
+    }
+
     const products = await prisma.product.findMany({
+      where,
       skip,
       take: limit,
       include: { 
@@ -85,8 +93,14 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
       shopId,
       budgetUSD,
       latitude,
-      longitude
+      longitude,
+      isOfficial
     } = req.body;
+
+    // Seuls ADMIN / SUPER_ADMIN peuvent publier un produit officiel CBF (page "Nos produits")
+    const userRole = req.user?.role;
+    const isAdminUser = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
+    const officialFlag = isAdminUser && (isOfficial === true || isOfficial === 'true');
 
     if (!title || !description || !categoryId) {
       return next(new AppError('Veuillez remplir les champs obligatoires (titre, description, catégorie).', 400));
@@ -134,7 +148,9 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
         priceUSD: parsedPriceUSD,
         categoryId,
         state: productState,
-        status: 'PENDING',
+        // Un produit officiel publié par un admin est activé immédiatement, sinon en attente de modération
+        status: officialFlag ? 'ACTIVE' : 'PENDING',
+        isOfficial: officialFlag,
         quantity: quantity ? parseInt(quantity, 10) : 1,
         sellerId: userId,
         type: type || 'SALE',
