@@ -114,4 +114,84 @@ router.delete('/users/:id', async (req, res, next) => {
   }
 });
 
+// 5. Liste des candidatures boutique (optionnel : ?status=PENDING|APPROVED|REJECTED)
+router.get('/boutiques', async (req, res, next) => {
+  try {
+    const { status } = req.query;
+    const shops = await prisma.shop.findMany({
+      where: status ? { status: String(status).toUpperCase() as any } : undefined,
+      include: { owner: { select: { name: true, email: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const data = shops.map((s) => ({
+      id: s.id,
+      name: s.name,
+      category: s.category,
+      city: s.city,
+      neighborhood: s.neighborhood,
+      address: s.address,
+      phone: s.phone,
+      description: s.description,
+      photos: s.photos,
+      status: s.status.toLowerCase(),
+      rejectionReason: s.rejectionReason,
+      applicantName: s.owner?.name,
+      applicantEmail: s.owner?.email,
+      createdAt: s.createdAt,
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 6. Valider une candidature boutique
+router.patch('/boutiques/:id/validate', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const shop = await prisma.shop.update({
+      where: { id },
+      data: { status: 'APPROVED', isApproved: true, rejectionReason: null },
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: shop.ownerId,
+        title: 'Boutique certifiée ✅',
+        message: `Félicitations ! Votre boutique "${shop.name}" a été validée par l'administration CBF.`,
+      },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 7. Refuser une candidature boutique
+router.patch('/boutiques/:id/reject', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const shop = await prisma.shop.update({
+      where: { id },
+      data: { status: 'REJECTED', isApproved: false, rejectionReason: reason || 'Non conforme aux critères CBF.' },
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: shop.ownerId,
+        title: 'Candidature boutique refusée',
+        message: `Votre candidature pour "${shop.name}" a été refusée. Motif : ${reason || 'non précisé'}.`,
+      },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

@@ -57,6 +57,12 @@ enum ContactRequestStatus {
   REJECTED
 }
 
+enum ShopStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id              String         @id @default(uuid())
   name            String
@@ -88,25 +94,34 @@ model User {
 }
 
 model Shop {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  slug        String   @unique
-  description String?
-  logo        String?
-  cover       String?
-  latitude    Float?
-  longitude   Float?
-  isApproved  Boolean  @default(false)
-  ownerId     String
-  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String     @id @default(uuid())
+  name            String     @unique
+  slug            String     @unique
+  description     String?
+  logo            String?
+  cover           String?
+  latitude        Float?
+  longitude       Float?
+  isApproved      Boolean    @default(false)
+  status          ShopStatus @default(PENDING)
+  category        String?
+  phone           String?
+  city            String?
+  neighborhood    String?
+  address         String?
+  photos          String[]   @default([])
+  rejectionReason String?
+  ownerId         String
+  owner           User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
   products    Product[]
   reviews     Review[]
 
   @@index([slug])
   @@index([ownerId])
+  @@index([status])
 }
 
 model Category {
@@ -319,6 +334,7 @@ enum TransactionType {
   WITHDRAWAL
   TRANSFER
   PURCHASE
+  CERTIFICATION
 }
 
 enum TransactionStatus {
