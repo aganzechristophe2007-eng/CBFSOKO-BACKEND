@@ -1,14 +1,23 @@
 import { Router } from 'express';
 import { protect } from '../middleware/auth.middleware';
-import { addFavorite, removeFavorite, getMyFavorites } from '../controllers/Favorite.controller';
+import {
+  addFavorite,
+  removeFavorite,
+  getMyFavorites,
+  toggleFavorite,
+} from '../controllers/favorite.controller';
 
 const router = Router();
 
-// Même schéma de montage que follow.routes.ts : ce routeur est branché
-// sur app.use('/api', favoriteRoutes) dans server.ts, d'où les chemins
-// complets ci-dessous.
+// Récupération de la liste des favoris
 router.get('/favorites/me', protect, getMyFavorites);
-router.post('/products/:id/favorite', protect, addFavorite);
+
+// Action Toggle (Ajouter / Retirer au clic)
+router.post('/products/:id/favorite', protect, toggleFavorite);
+router.post('/products/:id/favorites', protect, toggleFavorite);
+
+// Support des appels explicites POST et DELETE
+router.put('/products/:id/favorite', protect, addFavorite);
 router.delete('/products/:id/favorite', protect, removeFavorite);
 
 export default router;

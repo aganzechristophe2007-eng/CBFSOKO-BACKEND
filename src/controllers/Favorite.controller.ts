@@ -7,8 +7,59 @@ function getUserId(req: AuthRequest): string | undefined {
   return req.user?.userId || (req as any).userId || req.user?.id;
 }
 
-// "J'aime" un produit (idempotent grâce à upsert : un double-clic rapide
-// ne crée jamais de doublon ni d'erreur 500)
+// Bascule automatique : Ajoute si absent, supprime si présent (Attendu par le frontend via POST)
+export const toggleFavorite = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      return next(new AppError('Utilisateur non authentifié.', 401));
+    }
+
+    const { id: productId } = req.params;
+
+    if (!productId || typeof productId !== 'string') {
+      return next(new AppError('Identifiant produit invalide.', 400));
+    }
+
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      return next(new AppError('Produit introuvable.', 404));
+    }
+
+    const existingFavorite = await prisma.favorite.findUnique({
+      where: { userId_productId: { userId, productId } },
+    });
+
+    if (existingFavorite) {
+      await prisma.favorite.delete({
+        where: { id: existingFavorite.id },
+      });
+
+      res.status(200).json({
+        success: true,
+        isFavorite: false,
+        message: 'Produit retiré des favoris.',
+      });
+      return;
+    }
+
+    const newFavorite = await prisma.favorite.create({
+      data: { userId, productId },
+    });
+
+    res.status(201).json({
+      success: true,
+      isFavorite: true,
+      message: 'Produit ajouté aux favoris.',
+      data: newFavorite,
+    });
+  } catch (error: any) {
+    console.error('--> ERREUR CRITIQUE TOGGLE FAVORITE :', error);
+    next(new AppError(error.message || 'Erreur lors de la mise à jour des favoris.', 500));
+  }
+};
+
+// "J'aime" un produit
 export const addFavorite = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = getUserId(req);
@@ -36,7 +87,7 @@ export const addFavorite = async (req: AuthRequest, res: Response, next: NextFun
   }
 };
 
-// Retirer un "j'aime" (deleteMany = idempotent, jamais d'erreur si déjà retiré)
+// Retirer un "j'aime"
 export const removeFavorite = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = getUserId(req);
@@ -55,12 +106,14 @@ export const removeFavorite = async (req: AuthRequest, res: Response, next: Next
   }
 };
 
-// Liste des favoris de l'utilisateur connecté (jamais ceux d'un autre)
+// Liste des favoris de l'utilisateur connecté
 export const getMyFavorites = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const userId = getUserId(req);
     if (!userId) {
-      return next(new AppError('Utilisateur non authentifié.', 401));
+      // ❌ INCORRECT
+// ✅ CORRECT
+return next(new AppError('Utilisateur non authentifié.', 401));
     }
 
     const favorites = await prisma.favorite.findMany({

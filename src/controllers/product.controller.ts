@@ -25,7 +25,6 @@ const SELLER_SAFE_SELECT = {
 // === 1. Récupérer tous les produits (Public / Authentifié) ===
 export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    // Bornage strict de la pagination pour prévenir le DoS
     const rawPage = parseInt(req.query.page as string, 10);
     const rawLimit = parseInt(req.query.limit as string, 10);
 
@@ -156,12 +155,10 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
       return next(new AppError('La catégorie est obligatoire.', 400));
     }
 
-    // Restriction du flag "isOfficial" aux rôles administrateurs
     const userRole = req.user?.role;
     const isAdminUser = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
     const officialFlag = isAdminUser && (isOfficial === true || isOfficial === 'true');
 
-    // Génération cryptographiquement sûre du slug
     const randomBytes = crypto.randomBytes(4).toString('hex');
     const cleanTitle = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     const slug = `${cleanTitle}-${Date.now()}-${randomBytes}`;
@@ -169,7 +166,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
     const validStates = ['NEW', 'LIKE_NEW', 'GOOD', 'ACCEPTABLE'];
     const productState = validStates.includes(state) ? state : 'GOOD';
 
-    // Traitement sécurisé des fichiers (Multer)
     let imageUrls: string[] = [];
     let videoUrl: string | null = null;
 
@@ -197,7 +193,6 @@ export const createProduct = async (req: AuthRequest, res: Response, next: NextF
       }
     }
 
-    // Sanitization numérique des prix
     const parsedPriceUSD = priceUSD !== undefined && priceUSD !== '' ? Math.max(0, parseFloat(priceUSD)) : 0;
     const parsedPriceCDF = priceCDF !== undefined && priceCDF !== '' ? Math.max(0, parseFloat(priceCDF)) : 0;
     const parsedQuantity = quantity !== undefined && quantity !== '' ? Math.max(1, parseInt(quantity, 10)) : 1;
@@ -261,10 +256,9 @@ export const toggleFavorite = async (req: AuthRequest, res: Response, next: Next
     });
 
     if (!productExists) {
-      return next(new AppError('Le produit spécifié n\'existe pas.', 404));
+      return next(new AppError("Le produit spécifié n'existe pas.", 404));
     }
 
-    // Recherche d'un favori existant pour l'utilisateur
     const existingFavorite = await prisma.favorite.findFirst({
       where: {
         userId,
@@ -273,8 +267,11 @@ export const toggleFavorite = async (req: AuthRequest, res: Response, next: Next
     });
 
     if (existingFavorite) {
-      await prisma.favorite.delete({
-        where: { id: existingFavorite.id },
+      await prisma.favorite.deleteMany({
+        where: {
+          userId,
+          productId,
+        },
       });
 
       res.status(200).json({
@@ -298,7 +295,7 @@ export const toggleFavorite = async (req: AuthRequest, res: Response, next: Next
       message: 'Produit ajouté aux favoris.',
     });
   } catch (error) {
-    next(error);
+    next(new AppError('Erreur lors de la mise à jour des favoris.', 500));
   }
 };
 
@@ -335,7 +332,7 @@ export const markAsSold = async (req: AuthRequest, res: Response, next: NextFunc
 
     res.status(200).json({ success: true, data: updatedProduct });
   } catch (error) {
-    next(error);
+    next(new AppError('Erreur lors du changement d\'état du produit.', 500));
   }
 };
 
@@ -372,6 +369,6 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
       message: 'Produit supprimé avec succès.',
     });
   } catch (error) {
-    next(error);
+    next(new AppError('Erreur lors de la suppression du produit.', 500));
   }
 };
