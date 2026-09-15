@@ -1,39 +1,19 @@
-import { PrismaClient, Role } from '@prisma/client';
-import bcrypt from 'bcryptjs';
-import * as readline from 'readline';
-
-const prisma = new PrismaClient();
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+/// <reference types="node" />
+import { password } from '@inquirer/prompts';
 
 async function main() {
-  console.log('--- CRÉATION DU COMPTE SUPER ADMINISTRATEUR CBFSOKO ---');
-  
-  rl.question('Nom complet : ', (name) => {
-    rl.question('Email : ', (email) => {
-      rl.question('Mot de passe : ', async (password) => {
-        try {
-          const hashedPassword = await bcrypt.hash(password, 12);
-          const admin = await prisma.user.create({
-            data: {
-              name,
-              email,
-              passwordHash: hashedPassword,
-              role: Role.SUPER_ADMIN
-            }
-          });
-          console.log(`\nSuccès ! Super Administrateur créé avec l'ID : ${admin.id}`);
-        } catch (error) {
-          console.error('Erreur lors de la création :', error);
-        } finally {
-          await prisma.$disconnect();
-          rl.close();
-        }
-      });
-    });
+  const adminPassword = await password({
+    message: 'Entrez le mot de passe du Super Admin :',
+    mask: '*', // Affiche des '*' à chaque touche pressée
+    validate: (input) => {
+      if (input.length < 12) {
+        return 'Le mot de passe doit contenir au moins 12 caractères.';
+      }
+      return true;
+    },
   });
+
+  console.log('Mot de passe saisi et validé avec succès.');
 }
 
 main();
