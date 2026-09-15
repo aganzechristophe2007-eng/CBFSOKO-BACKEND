@@ -22,6 +22,7 @@ import messageRoutes from './routes/message.routes';
 import notificationRoutes from './routes/notification.routes';
 import followRoutes from './routes/follow.routes';
 import cartRoutes from './routes/Cart.routes';
+import favoriteRoutes from './routes/Favoriteroutes'; // <-- 1. IMPORT AJOUTÉ ICI
 
 const app: Application = express();
 const server = http.createServer(app);
@@ -36,11 +37,10 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Autoriser les requêtes sans origine (applications mobiles, curl) ou dans la liste d'autorisations
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(null, true); // Ajuster en callback(new Error('Non autorisé par CORS')) si strict
+        callback(null, true);
       }
     },
     credentials: true,
@@ -60,7 +60,6 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Exposer les images avec restriction d'en-tête (désactive le sniffing de types MIME)
 app.use(
   '/uploads',
   (req, res, next) => {
@@ -83,6 +82,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api', followRoutes);
+app.use('/api', favoriteRoutes); // <-- 2. ROUTE MONTÉE ICI
 
 // Vérouillage strict de l'Espace Administration
 app.use(
@@ -125,7 +125,6 @@ server.listen(PORT, () => {
   console.log(`[CBFSOKO] Serveur démarré en mode ${process.env.NODE_ENV || 'development'} sur le port ${PORT}`);
 });
 
-// Prévenir l'arrêt brutal du serveur lors d'erreurs asynchrones non gérées
 process.on('unhandledRejection', (reason: Error) => {
   console.error('[FATAL] Unhandled Rejection:', reason.message || reason);
 });
