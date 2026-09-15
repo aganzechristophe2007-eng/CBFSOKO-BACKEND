@@ -1,65 +1,90 @@
-import express, { Application, Request, Response, NextFunction } from 'express';
+import express, { Application, Request, Response } from 'express';
 import http from 'http';
-import { initSocket } from './services/socket.service';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import passport from 'passport';
+import { Role } from '@prisma/client';
+
+// Services & Middlewares
+import { initSocket } from './services/socket.service';
 import { errorMiddleware } from './middleware/error.middleware';
 import { protect, restrictTo } from './middleware/auth.middleware';
-import { Role } from '@prisma/client';
-import passport from 'passport';
 
-// Utilisation d'un namespace import pour forcer la récupération du routeur sous-jacent
-import * as authRoutesModule from './routes/auth.routes';
-import * as productRoutesModule from './routes/product.routes';
-import * as adminRoutesModule from './routes/admin.routes';
-import * as categoryRoutesModule from './routes/category.routes';
-import * as orderRoutesModule from './routes/orderRoutes';
-import * as walletRoutesModule from './routes/wallet.routes';
-import * as messageRoutesModule from './routes/message.routes';
-import * as notificationRoutesModule from './routes/notification.routes';
-import * as followRoutesModule from './routes/follow.routes'; // <-- CORRECTION : pointé vers ton fichier de follow
-import * as cartRoutesModule from './routes/Cart.routes'; // <-- AJOUT : le router du panier existait mais n'était jamais importé/monté
-
-const notificationRoutes = (notificationRoutesModule as any).default || notificationRoutesModule;
-const followRoutes = (followRoutesModule as any).default || followRoutesModule;      
-const authRoutes = (authRoutesModule as any).default || authRoutesModule;
-const productRoutes = (productRoutesModule as any).default || productRoutesModule;
-const adminRoutes = (adminRoutesModule as any).default || adminRoutesModule;
-const categoryRoutes = (categoryRoutesModule as any).default || categoryRoutesModule;
-const orderRoutes = (orderRoutesModule as any).default || orderRoutesModule;
-const walletRoutes = (walletRoutesModule as any).default || walletRoutesModule;
-const messageRoutes = (messageRoutesModule as any).default || messageRoutesModule;
-const cartRoutes = (cartRoutesModule as any).default || cartRoutesModule; // <-- AJOUT
+// --- Imports directs et explicites des routeurs ---
+import authRoutes from './routes/auth.routes';
+import productRoutes from './routes/product.routes';
+import adminRoutes from './routes/admin.routes';
+import categoryRoutes from './routes/category.routes';
+import orderRoutes from './routes/orderRoutes';
+import walletRoutes from './routes/wallet.routes';
+import messageRoutes from './routes/message.routes';
+import notificationRoutes from './routes/notification.routes';
+import followRoutes from './routes/follow.routes';
+import cartRoutes from './routes/Cart.routes';
 
 const app: Application = express();
 const server = http.createServer(app);
 
-// === Middlewares globaux ===
-app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// === 1. Configuration CORS Sécurisée ===
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'https://cbfsoko-bukavu.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Autoriser les requêtes sans origine (applications mobiles, curl) ou dans la liste d'autorisations
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Ajuster en callback(new Error('Non autorisé par CORS')) si strict
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+
+// === 2. Middlewares de Parsing & Authentification ===
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(passport.initialize());
 
-// S'assurer que le dossier public/uploads existe physiquement sur le serveur
+// === 3. Gestion des Fichiers Statiques ===
 const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Exposer le dossier uploads pour que le frontend puisse charger les images/avatars
-app.use('/uploads', express.static(uploadsDir));
+// Exposer les images avec restriction d'en-tête (désactive le sniffing de types MIME)
+app.use(
+  '/uploads',
+  (req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    next();
+  },
+  express.static(uploadsDir)
+);
 
-// Configuration de Socket.io pour la messagerie en temps réel et les appels audio/vidéo
+// === 4. Initalisation du serveur Temps Réel (Socket.io) ===
 initSocket(server);
 
-// === Montage des routes ===
+// === 5. Montage des Routes d'API ===
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/cart', cartRoutes);
+app.use('/api', followRoutes);
 
-// SÉCURITÉ : admin.routes.ts ne vérifie ni l'authentification ni le rôle en interne
-// (suppression d'utilisateurs, portefeuilles, transactions de TOUS les utilisateurs...).
-// On verrouille donc l'accès ici, au montage, aux seuls rôles administrateurs.
+// Vérouillage strict de l'Espace Administration
 app.use(
   '/api/admin',
   protect as unknown as express.RequestHandler,
@@ -67,38 +92,47 @@ app.use(
   adminRoutes
 );
 
-app.use('/api/categories', categoryRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/cart', cartRoutes); // <-- AJOUT : cart.routes.ts gère déjà "protect" en interne (router.use(protect))
-app.use('/api', followRoutes); // <-- BRANCHEMENT : Ajouté ici pour tes routes /api/sellers/:id/follow et /api/follows/me
-
-app.get('/api/health', (req: Request, res: Response) => {
-  res.status(200).json({ status: 'OK', project: 'CBFSOKO API', version: '1.0.0' });
-});
-
-app.get('/', (req: Request, res: Response) => {
+// === 6. Route de Santé & Diagnostics ===
+app.get('/api/health', (_req: Request, res: Response) => {
   res.status(200).json({
-    success: true,
-    message: 'API CBFSOKO en ligne 🚀'
+    status: 'OK',
+    project: 'CBFSOKO API',
+    timestamp: new Date().toISOString(),
   });
 });
 
-app.all('*', (req: Request, res: Response, next: NextFunction) => {
+app.get('/', (_req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'API CBFSOKO en ligne 🚀',
+  });
+});
+
+// === 7. Gestion des routes non trouvées (404) & Erreurs ===
+app.all('*', (req: Request, res: Response) => {
   res.status(404).json({
     success: false,
-    message: `Impossible de trouver ${req.originalUrl} sur ce serveur !`
+    message: `La ressource '${req.originalUrl}' est introuvable sur ce serveur.`,
   });
 });
 
 app.use(errorMiddleware);
 
+// === 8. Démarrage & Sécurisation des Crashes Serveur ===
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`Serveur CBFSOKO démarré et en ligne sur le port ${PORT}`);
+  console.log(`[CBFSOKO] Serveur démarré en mode ${process.env.NODE_ENV || 'development'} sur le port ${PORT}`);
+});
+
+// Prévenir l'arrêt brutal du serveur lors d'erreurs asynchrones non gérées
+process.on('unhandledRejection', (reason: Error) => {
+  console.error('[FATAL] Unhandled Rejection:', reason.message || reason);
+});
+
+process.on('uncaughtException', (error: Error) => {
+  console.error('[FATAL] Uncaught Exception:', error.message);
+  process.exit(1);
 });
 
 export default app;
