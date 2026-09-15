@@ -1,64 +1,101 @@
 import { Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import path from 'path';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { AppError } from '../utils/AppError';
 import { prisma } from '../lib/prisma';
 
-// Récupérer tous les produits
+// Regex d'assainissement et validation UUID
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+// Nettoyeur de chemin pour éviter d'exposer les répertoires système (Path Traversal)
+const formatFilePath = (filePath: string): string => {
+  const fileName = path.basename(filePath);
+  return `/uploads/${fileName}`;
+};
+
+// Sélection sécurisée du profil vendeur
+const SELLER_SAFE_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  phone: true,
+} as const;
+
+// === 1. Récupérer tous les produits (Public / Authentifié) ===
 export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
+    // Bornage strict de la pagination pour prévenir le DoS
+    const rawPage = parseInt(req.query.page as string, 10);
+    const rawLimit = parseInt(req.query.limit as string, 10);
+
+    const page = !isNaN(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = !isNaN(rawLimit) && rawLimit > 0 && rawLimit <= 50 ? rawLimit : 20;
     const skip = (page - 1) * limit;
 
-    // Filtre "produits officiels CBF" utilisé par la page /nos-produits
     const { official } = req.query;
-    const where: any = {};
+    const where: Record<string, any> = {};
+
     if (official === 'true') {
       where.isOfficial = true;
     }
 
-    // Utilisateur courant (optionnel : /products reste accessible sans être connecté)
-    const userId = req.user?.userId || (req as any).userId || req.user?.id;
+    const userId = req.user?.id || req.user?.userId;
 
     const products = await prisma.product.findMany({
       where,
       skip,
       take: limit,
-      include: { 
-        category: true, 
-        seller: { select: { id: true, name: true, email: true, phone: true } },
+      include: {
+        category: true,
+        seller: { select: SELLER_SAFE_SELECT },
         _count: { select: { favorites: true } },
-        // On ne récupère QUE le favori de l'utilisateur connecté (jamais ceux des autres)
         ...(userId ? { favorites: { where: { userId }, select: { id: true } } } : {}),
       },
       orderBy: { createdAt: 'desc' },
     });
 
+    const totalCount = await prisma.product.count({ where });
+
     const shaped = products.map((p: any) => ({
       ...p,
       favoritesCount: p._count?.favorites ?? 0,
       isFavorited: Array.isArray(p.favorites) ? p.favorites.length > 0 : false,
+      favorites: undefined,
+      _count: undefined,
     }));
 
-    res.status(200).json({ success: true, data: shaped });
-  } catch (error: any) {
-    console.error("--> ERREUR CRITIQUE GET PRODUCTS :", error);
-    next(new AppError(error.message || 'Erreur lors de la récupération des produits.', 500));
+    res.status(200).json({
+      success: true,
+      data: shaped,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    });
+  } catch (error) {
+    next(new AppError('Erreur lors de la récupération des produits.', 500));
   }
 };
 
-// Récupérer un produit spécifique par son ID
+// === 2. Récupérer un produit par son ID ===
 export const getProductById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    const userId = req.user?.userId || (req as any).userId || req.user?.id;
+
+    if (!id || typeof id !== 'string') {
+      return next(new AppError('Identifiant de produit invalide.', 400));
+    }
+
+    const userId = req.user?.id || req.user?.userId;
 
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
         category: true,
-        seller: { select: { id: true, name: true, email: true, phone: true } },
+        seller: { select: SELLER_SAFE_SELECT },
         _count: { select: { favorites: true } },
         ...(userId ? { favorites: { where: { userId }, select: { id: true } } } : {}),
       },
@@ -68,142 +105,217 @@ export const getProductById = async (req: AuthRequest, res: Response, next: Next
       return next(new AppError('Produit introuvable.', 404));
     }
 
-    const shaped: any = {
+    const shaped = {
       ...product,
       favoritesCount: (product as any)._count?.favorites ?? 0,
       isFavorited: Array.isArray((product as any).favorites) ? (product as any).favorites.length > 0 : false,
+      favorites: undefined,
+      _count: undefined,
     };
 
     res.status(200).json({ success: true, data: shaped });
-  } catch (error: any) {
-    console.error("--> ERREUR CRITIQUE GET PRODUCT BY ID :", error);
-    next(new AppError(error.message || 'Erreur lors de la récupération du produit.', 500));
+  } catch (error) {
+    next(new AppError('Erreur lors de la récupération du produit.', 500));
   }
 };
 
-// Créer un produit
+// === 3. Créer un produit (Authentification obligatoire via Middleware) ===
 export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    let userId = req.user?.userId || (req as any).userId || req.user?.id;
-    
-    if (!userId && req.headers.authorization) {
-      try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-        userId = decoded.id || decoded.userId;
-      } catch (e) {
-        // Ignorer l'erreur de secours
-      }
-    }
+    const userId = req.user?.id || req.user?.userId;
 
     if (!userId) {
       return next(new AppError('Utilisateur non authentifié.', 401));
     }
 
-    const { 
-      title, 
-      description, 
-      categoryId, 
-      state, 
-      priceCDF, 
-      priceUSD, 
-      quantity, 
-      type, 
-      durationMode, 
+    const {
+      title,
+      description,
+      categoryId,
+      state,
+      priceCDF,
+      priceUSD,
+      quantity,
+      type,
+      durationMode,
       expiresAt,
       shopId,
       budgetUSD,
       latitude,
       longitude,
-      isOfficial
+      isOfficial,
     } = req.body;
 
-    // Seuls ADMIN / SUPER_ADMIN peuvent publier un produit officiel CBF (page "Nos produits")
+    if (!title || typeof title !== 'string' || title.trim() === '') {
+      return next(new AppError('Le titre du produit est obligatoire.', 400));
+    }
+    if (!description || typeof description !== 'string' || description.trim() === '') {
+      return next(new AppError('La description est obligatoire.', 400));
+    }
+    if (!categoryId || typeof categoryId !== 'string') {
+      return next(new AppError('La catégorie est obligatoire.', 400));
+    }
+
+    // Restriction du flag "isOfficial" aux rôles administrateurs
     const userRole = req.user?.role;
     const isAdminUser = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
     const officialFlag = isAdminUser && (isOfficial === true || isOfficial === 'true');
 
-    if (!title || !description || !categoryId) {
-      return next(new AppError('Veuillez remplir les champs obligatoires (titre, description, catégorie).', 400));
-    }
-
-    // Génération sécurisée du slug unique
-    const randomSuffix = Math.random().toString(36).substring(2, 6);
-    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '-' + Date.now() + '-' + randomSuffix;
+    // Génération cryptographiquement sûre du slug
+    const randomBytes = crypto.randomBytes(4).toString('hex');
+    const cleanTitle = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const slug = `${cleanTitle}-${Date.now()}-${randomBytes}`;
 
     const validStates = ['NEW', 'LIKE_NEW', 'GOOD', 'ACCEPTABLE'];
     const productState = validStates.includes(state) ? state : 'GOOD';
 
-    // Gestion robuste et typée des fichiers (images et vidéo)
+    // Traitement sécurisé des fichiers (Multer)
     let imageUrls: string[] = [];
     let videoUrl: string | null = null;
 
     const uploadedFiles = req.files as { [fieldname: string]: Express.Multer.File[] } | Express.Multer.File[] | undefined;
 
     if (uploadedFiles && !Array.isArray(uploadedFiles)) {
-      const filesMap = uploadedFiles;
-      if (filesMap.images && filesMap.images.length > 0) {
-        imageUrls = filesMap.images.map(file => file.path);
+      if (uploadedFiles.images && uploadedFiles.images.length > 0) {
+        imageUrls = uploadedFiles.images.map((file) => formatFilePath(file.path));
       }
-      if (filesMap.video && filesMap.video.length > 0) {
-        videoUrl = filesMap.video[0].path;
+      if (uploadedFiles.video && uploadedFiles.video.length > 0) {
+        videoUrl = formatFilePath(uploadedFiles.video[0].path);
       }
     } else if (uploadedFiles && Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
-      imageUrls = uploadedFiles.map(file => file.path);
+      imageUrls = uploadedFiles.map((file) => formatFilePath(file.path));
     } else if (req.file) {
-      imageUrls = [(req.file as any).path];
+      imageUrls = [formatFilePath(req.file.path)];
     } else if (req.body.images) {
-      imageUrls = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+      try {
+        const parsed = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+        if (Array.isArray(parsed)) {
+          imageUrls = parsed.filter((img) => typeof img === 'string');
+        }
+      } catch {
+        imageUrls = [];
+      }
     }
 
-    // Conversion sécurisée des prix pour éviter les NaN / erreurs Prisma
-    const parsedPriceUSD = priceUSD !== undefined && priceUSD !== '' ? parseFloat(priceUSD) : 0;
-    const parsedPriceCDF = priceCDF !== undefined && priceCDF !== '' ? parseFloat(priceCDF) : 0;
+    // Sanitization numérique des prix
+    const parsedPriceUSD = priceUSD !== undefined && priceUSD !== '' ? Math.max(0, parseFloat(priceUSD)) : 0;
+    const parsedPriceCDF = priceCDF !== undefined && priceCDF !== '' ? Math.max(0, parseFloat(priceCDF)) : 0;
+    const parsedQuantity = quantity !== undefined && quantity !== '' ? Math.max(1, parseInt(quantity, 10)) : 1;
 
     const newProduct = await prisma.product.create({
       data: {
-        title,
+        title: title.trim(),
         slug,
-        description,
-        priceCDF: parsedPriceCDF,
-        priceUSD: parsedPriceUSD,
+        description: description.trim(),
+        priceCDF: isNaN(parsedPriceCDF) ? 0 : parsedPriceCDF,
+        priceUSD: isNaN(parsedPriceUSD) ? 0 : parsedPriceUSD,
         categoryId,
         state: productState,
-        // Un produit officiel publié par un admin est activé immédiatement, sinon en attente de modération
         status: officialFlag ? 'ACTIVE' : 'PENDING',
         isOfficial: officialFlag,
-        quantity: quantity ? parseInt(quantity, 10) : 1,
+        quantity: isNaN(parsedQuantity) ? 1 : parsedQuantity,
         sellerId: userId,
         type: type || 'SALE',
         images: imageUrls,
-        videoUrl: videoUrl, // <-- Enregistrement sécurisé de la capsule vidéo
+        videoUrl,
         durationMode: durationMode || 'FREE_24H',
-        ...(expiresAt && { expiresAt: new Date(expiresAt) }),
-        ...(shopId && { shopId }),
-        ...(budgetUSD && { budgetUSD: parseFloat(budgetUSD) }),
-        ...(latitude !== undefined && latitude !== '' && { latitude: parseFloat(latitude) }),
-        ...(longitude !== undefined && longitude !== '' && { longitude: parseFloat(longitude) }),
+        ...(expiresAt && !isNaN(Date.parse(expiresAt)) && { expiresAt: new Date(expiresAt) }),
+        ...(shopId && typeof shopId === 'string' && { shopId }),
+        ...(budgetUSD && !isNaN(parseFloat(budgetUSD)) && { budgetUSD: parseFloat(budgetUSD) }),
+        ...(latitude !== undefined && latitude !== '' && !isNaN(parseFloat(latitude)) && { latitude: parseFloat(latitude) }),
+        ...(longitude !== undefined && longitude !== '' && !isNaN(parseFloat(longitude)) && { longitude: parseFloat(longitude) }),
+      },
+      include: {
+        category: true,
+        seller: { select: SELLER_SAFE_SELECT },
       },
     });
 
     res.status(201).json({
       success: true,
-      message: 'Produit et sa capsule vidéo créés avec succès',
+      message: 'Produit créé avec succès.',
       data: newProduct,
     });
-  } catch (error: any) {
-    console.error("--> ERREUR CRITIQUE PRISMA / CREATE PRODUCT :", error);
-    next(new AppError(error.message || 'Erreur interne lors de la création.', 500));
+  } catch (error) {
+    next(new AppError('Erreur interne lors de la création du produit.', 500));
   }
 };
 
-// Marquer un produit comme vendu
+// === 4. Basculer l'état Favori (Ajouter / Retirer) ===
+export const toggleFavorite = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const userId = req.user?.id || req.user?.userId;
+    const { id: productId } = req.params;
+
+    if (!userId) {
+      return next(new AppError('Utilisateur non authentifié.', 401));
+    }
+
+    if (!productId || typeof productId !== 'string') {
+      return next(new AppError('Identifiant du produit manquant.', 400));
+    }
+
+    const productExists = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!productExists) {
+      return next(new AppError('Le produit spécifié n\'existe pas.', 404));
+    }
+
+    // Recherche d'un favori existant pour l'utilisateur
+    const existingFavorite = await prisma.favorite.findFirst({
+      where: {
+        userId,
+        productId,
+      },
+    });
+
+    if (existingFavorite) {
+      await prisma.favorite.delete({
+        where: { id: existingFavorite.id },
+      });
+
+      res.status(200).json({
+        success: true,
+        isFavorite: false,
+        message: 'Produit retiré des favoris.',
+      });
+      return;
+    }
+
+    await prisma.favorite.create({
+      data: {
+        userId,
+        productId,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      isFavorite: true,
+      message: 'Produit ajouté aux favoris.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// === 5. Marquer un produit comme vendu ===
 export const markAsSold = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    let userId = req.user?.userId || (req as any).userId || req.user?.id;
+    const userId = req.user?.id || req.user?.userId;
 
-    const product = await prisma.product.findUnique({ where: { id } });
+    if (!userId) {
+      return next(new AppError('Utilisateur non authentifié.', 401));
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      select: { id: true, sellerId: true },
+    });
 
     if (!product) {
       return next(new AppError('Produit introuvable.', 404));
@@ -211,6 +323,7 @@ export const markAsSold = async (req: AuthRequest, res: Response, next: NextFunc
 
     const userRole = req.user?.role;
     const isAdmin = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN_FINANCE';
+
     if (product.sellerId !== userId && !isAdmin) {
       return next(new AppError("Vous n'avez pas l'autorisation de modifier ce produit.", 403));
     }
@@ -226,20 +339,28 @@ export const markAsSold = async (req: AuthRequest, res: Response, next: NextFunc
   }
 };
 
-// Supprimer un produit
+// === 6. Supprimer un produit ===
 export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    const userId = req.user?.userId || (req as any).userId || req.user?.id;
-    const userRole = req.user?.role;
+    const userId = req.user?.id || req.user?.userId;
 
-    const product = await prisma.product.findUnique({ where: { id } });
+    if (!userId) {
+      return next(new AppError('Utilisateur non authentifié.', 401));
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      select: { id: true, sellerId: true },
+    });
 
     if (!product) {
       return next(new AppError('Produit introuvable.', 404));
     }
 
+    const userRole = req.user?.role;
     const isAdmin = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN_FINANCE';
+
     if (product.sellerId !== userId && !isAdmin) {
       return next(new AppError("Vous n'avez pas l'autorisation de supprimer ce produit.", 403));
     }
@@ -248,7 +369,7 @@ export const deleteProduct = async (req: AuthRequest, res: Response, next: NextF
 
     res.status(200).json({
       success: true,
-      message: 'Produit supprimé avec succès de la base de données.',
+      message: 'Produit supprimé avec succès.',
     });
   } catch (error) {
     next(error);
