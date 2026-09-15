@@ -80,6 +80,7 @@ model User {
   orders          Order[]
   reviews         Review[]
   favorites       Favorite[]
+  cart            Cart?
   sentMessages    Message[]      @relation("SentMessages")
   receivedMessages Message[]     @relation("ReceivedMessages")
   
@@ -160,7 +161,7 @@ model Product {
   expiresAt     DateTime?     
   isSold        Boolean       @default(false) 
 
-  // Produit officiel CBF publiÃ© depuis la page Admin â€” visible sur "Nos produits" et revendable avec commission
+  // Produit officiel CBF publiÃƒÂ© depuis la page Admin Ã¢â‚¬â€ visible sur "Nos produits" et revendable avec commission
   isOfficial    Boolean       @default(false)
 
   createdAt     DateTime      @default(now())
@@ -168,6 +169,7 @@ model Product {
 
   orderItems    OrderItem[]
   favorites     Favorite[]
+  cartItems     CartItem[]
   reviews       Review[]
 
   @@index([slug])
@@ -259,6 +261,36 @@ model Favorite {
   @@unique([userId, productId])
 }
 
+// Panier : un seul panier persistant par utilisateur (userId @unique).
+// SÃ©curitÃ© : toute opÃ©ration sur un Cart/CartItem doit vÃ©rifier que
+// cart.userId === l'utilisateur authentifiÃ© (voir cart.controller.ts) â€”
+// jamais faire confiance Ã  un userId envoyÃ© par le client.
+model Cart {
+  id        String     @id @default(uuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Un mÃªme produit ne peut apparaÃ®tre qu'une seule fois par panier
+  // (un deuxiÃ¨me "ajout" incrÃ©mente la quantitÃ© au lieu de dupliquer la ligne)
+  @@unique([cartId, productId])
+  @@index([cartId])
+  @@index([productId])
+}
+
 model Message {
   id         String   @id @default(uuid())
   senderId   String
@@ -300,7 +332,7 @@ model Notification {
   message   String
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
-  status    String   @default("PENDING") // Ou ton type/enum personnalisÃ©
+  status    String   @default("PENDING") // Ou ton type/enum personnalisÃƒÂ©
   @@index([userId])
   @@index([senderId])
 }
@@ -352,7 +384,7 @@ model Follow {
   followingId String   // La boutique / le vendeur suivi
   createdAt   DateTime @default(now())
 
-  @@unique([followerId, followingId]) // EmpÃªche de s'abonner 2 fois au mÃªme
+  @@unique([followerId, followingId]) // EmpÃƒÂªche de s'abonner 2 fois au mÃƒÂªme
 }
 model Deposit {
   id          String          @id @default(uuid())

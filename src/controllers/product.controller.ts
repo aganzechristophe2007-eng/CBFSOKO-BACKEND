@@ -18,6 +18,9 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       where.isOfficial = true;
     }
 
+    // Utilisateur courant (optionnel : /products reste accessible sans être connecté)
+    const userId = req.user?.userId || (req as any).userId || req.user?.id;
+
     const products = await prisma.product.findMany({
       where,
       skip,
@@ -25,11 +28,20 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
       include: { 
         category: true, 
         seller: { select: { id: true, name: true, email: true, phone: true } },
+        _count: { select: { favorites: true } },
+        // On ne récupère QUE le favori de l'utilisateur connecté (jamais ceux des autres)
+        ...(userId ? { favorites: { where: { userId }, select: { id: true } } } : {}),
       },
       orderBy: { createdAt: 'desc' },
     });
 
-    res.status(200).json({ success: true, data: products });
+    const shaped = products.map((p: any) => ({
+      ...p,
+      favoritesCount: p._count?.favorites ?? 0,
+      isFavorited: Array.isArray(p.favorites) ? p.favorites.length > 0 : false,
+    }));
+
+    res.status(200).json({ success: true, data: shaped });
   } catch (error: any) {
     console.error("--> ERREUR CRITIQUE GET PRODUCTS :", error);
     next(new AppError(error.message || 'Erreur lors de la récupération des produits.', 500));
@@ -40,12 +52,15 @@ export const getProducts = async (req: AuthRequest, res: Response, next: NextFun
 export const getProductById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId || (req as any).userId || req.user?.id;
 
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
         category: true,
         seller: { select: { id: true, name: true, email: true, phone: true } },
+        _count: { select: { favorites: true } },
+        ...(userId ? { favorites: { where: { userId }, select: { id: true } } } : {}),
       },
     });
 
@@ -53,7 +68,13 @@ export const getProductById = async (req: AuthRequest, res: Response, next: Next
       return next(new AppError('Produit introuvable.', 404));
     }
 
-    res.status(200).json({ success: true, data: product });
+    const shaped: any = {
+      ...product,
+      favoritesCount: (product as any)._count?.favorites ?? 0,
+      isFavorited: Array.isArray((product as any).favorites) ? (product as any).favorites.length > 0 : false,
+    };
+
+    res.status(200).json({ success: true, data: shaped });
   } catch (error: any) {
     console.error("--> ERREUR CRITIQUE GET PRODUCT BY ID :", error);
     next(new AppError(error.message || 'Erreur lors de la récupération du produit.', 500));

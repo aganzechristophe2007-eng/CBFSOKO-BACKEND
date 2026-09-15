@@ -1,101 +1,256 @@
-import express, { Application, Request, Response, NextFunction } from 'express';
-import http from 'http';
-import { initSocket } from './services/socket.service';
-import cors from 'cors';
-import path from 'path';
-import fs from 'fs';
-import { errorMiddleware } from './middleware/error.middleware';
-import { protect, restrictTo } from './middleware/auth.middleware';
-import { Role } from '@prisma/client';
-import passport from 'passport';
+import { Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { AuthRequest } from '../middleware/auth.middleware';
+import { AppError } from '../utils/AppError';
+import { prisma } from '../lib/prisma';
 
-// Utilisation d'un namespace import pour forcer la récupération du routeur sous-jacent
-import * as authRoutesModule from './routes/auth.routes';
-import * as productRoutesModule from './routes/product.routes';
-import * as adminRoutesModule from './routes/admin.routes';
-import * as categoryRoutesModule from './routes/category.routes';
-import * as orderRoutesModule from './routes/orderRoutes';
-import * as walletRoutesModule from './routes/wallet.routes';
-import * as messageRoutesModule from './routes/message.routes';
-import * as notificationRoutesModule from './routes/notification.routes';
-import * as followRoutesModule from './routes/follow.routes'; // <-- CORRECTION : pointé vers ton fichier de follow
+// Récupérer tous les produits
+export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
 
-const notificationRoutes = (notificationRoutesModule as any).default || notificationRoutesModule;
-const followRoutes = (followRoutesModule as any).default || followRoutesModule;      
-const authRoutes = (authRoutesModule as any).default || authRoutesModule;
-const productRoutes = (productRoutesModule as any).default || productRoutesModule;
-const adminRoutes = (adminRoutesModule as any).default || adminRoutesModule;
-const categoryRoutes = (categoryRoutesModule as any).default || categoryRoutesModule;
-const orderRoutes = (orderRoutesModule as any).default || orderRoutesModule;
-const walletRoutes = (walletRoutesModule as any).default || walletRoutesModule;
-const messageRoutes = (messageRoutesModule as any).default || messageRoutesModule;
+    // Filtre "produits officiels CBF" utilisé par la page /nos-produits
+    const { official } = req.query;
+    const where: any = {};
+    if (official === 'true') {
+      where.isOfficial = true;
+    }
 
-const app: Application = express();
-const server = http.createServer(app);
+    // Utilisateur courant (optionnel : /products reste accessible sans être connecté)
+    const userId = req.user?.userId || (req as any).userId || req.user?.id;
 
-// === Middlewares globaux ===
-app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(passport.initialize());
+    const products = await prisma.product.findMany({
+      where,
+      skip,
+      take: limit,
+      include: { 
+        category: true, 
+        seller: { select: { id: true, name: true, email: true, phone: true } },
+        _count: { select: { favorites: true } },
+        // On ne récupère QUE le favori de l'utilisateur connecté (jamais ceux des autres)
+        ...(userId ? { favorites: { where: { userId }, select: { id: true } } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-// S'assurer que le dossier public/uploads existe physiquement sur le serveur
-const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
+    const shaped = products.map((p: any) => ({
+      ...p,
+      favoritesCount: p._count?.favorites ?? 0,
+      isFavorited: Array.isArray(p.favorites) ? p.favorites.length > 0 : false,
+    }));
 
-// Exposer le dossier uploads pour que le frontend puisse charger les images/avatars
-app.use('/uploads', express.static(uploadsDir));
+    res.status(200).json({ success: true, data: shaped });
+  } catch (error: any) {
+    console.error("--> ERREUR CRITIQUE GET PRODUCTS :", error);
+    next(new AppError(error.message || 'Erreur lors de la récupération des produits.', 500));
+  }
+};
 
-// Configuration de Socket.io pour la messagerie en temps réel et les appels audio/vidéo
-initSocket(server);
+// Récupérer un produit spécifique par son ID
+export const getProductById = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId || (req as any).userId || req.user?.id;
 
-// === Montage des routes ===
-app.use('/api/auth', authRoutes);
-app.use('/api/products', productRoutes);
+    const product = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        seller: { select: { id: true, name: true, email: true, phone: true } },
+        _count: { select: { favorites: true } },
+        ...(userId ? { favorites: { where: { userId }, select: { id: true } } } : {}),
+      },
+    });
 
-// SÉCURITÉ : admin.routes.ts ne vérifie ni l'authentification ni le rôle en interne
-// (suppression d'utilisateurs, portefeuilles, transactions de TOUS les utilisateurs...).
-// On verrouille donc l'accès ici, au montage, aux seuls rôles administrateurs.
-app.use(
-  '/api/admin',
-  protect as unknown as express.RequestHandler,
-  restrictTo(Role.ADMIN, Role.SUPER_ADMIN, Role.ADMIN_FINANCE) as unknown as express.RequestHandler,
-  adminRoutes
-);
+    if (!product) {
+      return next(new AppError('Produit introuvable.', 404));
+    }
 
-app.use('/api/categories', categoryRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api', followRoutes); // <-- BRANCHEMENT : Ajouté ici pour tes routes /api/sellers/:id/follow et /api/follows/me
+    const shaped: any = {
+      ...product,
+      favoritesCount: (product as any)._count?.favorites ?? 0,
+      isFavorited: Array.isArray((product as any).favorites) ? (product as any).favorites.length > 0 : false,
+    };
 
-app.get('/api/health', (req: Request, res: Response) => {
-  res.status(200).json({ status: 'OK', project: 'CBFSOKO API', version: '1.0.0' });
-});
+    res.status(200).json({ success: true, data: shaped });
+  } catch (error: any) {
+    console.error("--> ERREUR CRITIQUE GET PRODUCT BY ID :", error);
+    next(new AppError(error.message || 'Erreur lors de la récupération du produit.', 500));
+  }
+};
 
-app.get('/', (req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: 'API CBFSOKO en ligne 🚀'
-  });
-});
+// Créer un produit
+export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    let userId = req.user?.userId || (req as any).userId || req.user?.id;
+    
+    if (!userId && req.headers.authorization) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+        userId = decoded.id || decoded.userId;
+      } catch (e) {
+        // Ignorer l'erreur de secours
+      }
+    }
 
-app.all('*', (req: Request, res: Response, next: NextFunction) => {
-  res.status(404).json({
-    success: false,
-    message: `Impossible de trouver ${req.originalUrl} sur ce serveur !`
-  });
-});
+    if (!userId) {
+      return next(new AppError('Utilisateur non authentifié.', 401));
+    }
 
-app.use(errorMiddleware);
+    const { 
+      title, 
+      description, 
+      categoryId, 
+      state, 
+      priceCDF, 
+      priceUSD, 
+      quantity, 
+      type, 
+      durationMode, 
+      expiresAt,
+      shopId,
+      budgetUSD,
+      latitude,
+      longitude,
+      isOfficial
+    } = req.body;
 
-const PORT = process.env.PORT || 5000;
+    // Seuls ADMIN / SUPER_ADMIN peuvent publier un produit officiel CBF (page "Nos produits")
+    const userRole = req.user?.role;
+    const isAdminUser = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN';
+    const officialFlag = isAdminUser && (isOfficial === true || isOfficial === 'true');
 
-server.listen(PORT, () => {
-  console.log(`Serveur CBFSOKO démarré et en ligne sur le port ${PORT}`);
-});
+    if (!title || !description || !categoryId) {
+      return next(new AppError('Veuillez remplir les champs obligatoires (titre, description, catégorie).', 400));
+    }
 
-export default app;
+    // Génération sécurisée du slug unique
+    const randomSuffix = Math.random().toString(36).substring(2, 6);
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '-' + Date.now() + '-' + randomSuffix;
+
+    const validStates = ['NEW', 'LIKE_NEW', 'GOOD', 'ACCEPTABLE'];
+    const productState = validStates.includes(state) ? state : 'GOOD';
+
+    // Gestion robuste et typée des fichiers (images et vidéo)
+    let imageUrls: string[] = [];
+    let videoUrl: string | null = null;
+
+    const uploadedFiles = req.files as { [fieldname: string]: Express.Multer.File[] } | Express.Multer.File[] | undefined;
+
+    if (uploadedFiles && !Array.isArray(uploadedFiles)) {
+      const filesMap = uploadedFiles;
+      if (filesMap.images && filesMap.images.length > 0) {
+        imageUrls = filesMap.images.map(file => file.path);
+      }
+      if (filesMap.video && filesMap.video.length > 0) {
+        videoUrl = filesMap.video[0].path;
+      }
+    } else if (uploadedFiles && Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
+      imageUrls = uploadedFiles.map(file => file.path);
+    } else if (req.file) {
+      imageUrls = [(req.file as any).path];
+    } else if (req.body.images) {
+      imageUrls = typeof req.body.images === 'string' ? JSON.parse(req.body.images) : req.body.images;
+    }
+
+    // Conversion sécurisée des prix pour éviter les NaN / erreurs Prisma
+    const parsedPriceUSD = priceUSD !== undefined && priceUSD !== '' ? parseFloat(priceUSD) : 0;
+    const parsedPriceCDF = priceCDF !== undefined && priceCDF !== '' ? parseFloat(priceCDF) : 0;
+
+    const newProduct = await prisma.product.create({
+      data: {
+        title,
+        slug,
+        description,
+        priceCDF: parsedPriceCDF,
+        priceUSD: parsedPriceUSD,
+        categoryId,
+        state: productState,
+        // Un produit officiel publié par un admin est activé immédiatement, sinon en attente de modération
+        status: officialFlag ? 'ACTIVE' : 'PENDING',
+        isOfficial: officialFlag,
+        quantity: quantity ? parseInt(quantity, 10) : 1,
+        sellerId: userId,
+        type: type || 'SALE',
+        images: imageUrls,
+        videoUrl: videoUrl, // <-- Enregistrement sécurisé de la capsule vidéo
+        durationMode: durationMode || 'FREE_24H',
+        ...(expiresAt && { expiresAt: new Date(expiresAt) }),
+        ...(shopId && { shopId }),
+        ...(budgetUSD && { budgetUSD: parseFloat(budgetUSD) }),
+        ...(latitude !== undefined && latitude !== '' && { latitude: parseFloat(latitude) }),
+        ...(longitude !== undefined && longitude !== '' && { longitude: parseFloat(longitude) }),
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Produit et sa capsule vidéo créés avec succès',
+      data: newProduct,
+    });
+  } catch (error: any) {
+    console.error("--> ERREUR CRITIQUE PRISMA / CREATE PRODUCT :", error);
+    next(new AppError(error.message || 'Erreur interne lors de la création.', 500));
+  }
+};
+
+// Marquer un produit comme vendu
+export const markAsSold = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    let userId = req.user?.userId || (req as any).userId || req.user?.id;
+
+    const product = await prisma.product.findUnique({ where: { id } });
+
+    if (!product) {
+      return next(new AppError('Produit introuvable.', 404));
+    }
+
+    const userRole = req.user?.role;
+    const isAdmin = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN_FINANCE';
+    if (product.sellerId !== userId && !isAdmin) {
+      return next(new AppError("Vous n'avez pas l'autorisation de modifier ce produit.", 403));
+    }
+
+    const updatedProduct = await prisma.product.update({
+      where: { id },
+      data: { isSold: true },
+    });
+
+    res.status(200).json({ success: true, data: updatedProduct });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Supprimer un produit
+export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId || (req as any).userId || req.user?.id;
+    const userRole = req.user?.role;
+
+    const product = await prisma.product.findUnique({ where: { id } });
+
+    if (!product) {
+      return next(new AppError('Produit introuvable.', 404));
+    }
+
+    const isAdmin = userRole === 'ADMIN' || userRole === 'SUPER_ADMIN' || userRole === 'ADMIN_FINANCE';
+    if (product.sellerId !== userId && !isAdmin) {
+      return next(new AppError("Vous n'avez pas l'autorisation de supprimer ce produit.", 403));
+    }
+
+    await prisma.product.delete({ where: { id } });
+
+    res.status(200).json({
+      success: true,
+      message: 'Produit supprimé avec succès de la base de données.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};

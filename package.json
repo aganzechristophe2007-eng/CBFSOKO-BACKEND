@@ -2,6 +2,9 @@
   "name": "cbfsoko-backend",
   "version": "1.0.0",
   "description": "Backend API pour la marketplace CBFSOKO",
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
