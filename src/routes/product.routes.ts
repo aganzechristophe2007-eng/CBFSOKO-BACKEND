@@ -1,10 +1,11 @@
-import { Router, Response, NextFunction } from 'express';
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import { 
   getProducts, 
   getProductById, 
   createProduct, 
   markAsSold, 
-  deleteProduct 
+  deleteProduct,
+  toggleFavorite // Assurez-vous d'avoir ce contrôleur dans votre product.controller.ts
 } from '../controllers/product.controller';
 import { protect, restrictTo } from '../middleware/auth.middleware';
 import { Role } from '@prisma/client';
@@ -12,42 +13,65 @@ import upload from '../middleware/upload.middleware';
 
 const router = Router();
 
-// Route publique : Récupérer tous les produits
-router.get('/', async (req: any, res: Response, next: NextFunction) => {
-  return getProducts(req, res, next);
-});
+// Wrapper utilitaire pour éviter le répétitif req: any / async-await dans le routeur
+const asyncHandler = (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>): RequestHandler => {
+  return (req, res, next) => {
+    fn(req, res, next).catch(next);
+  };
+};
 
-// Route publique : Récupérer un produit par son ID
-router.get('/:id', async (req: any, res: Response, next: NextFunction) => {
-  return getProductById(req, res, next);
-});
+// --- Routes Publiques ---
 
-// Route protégée : Création d'un produit avec support sécurisé des images (max 5) et de la vidéo (max 1)
+// GET /api/products : Récupérer tous les produits
+router.get('/', asyncHandler(getProducts));
+
+// GET /api/products/:id : Récupérer un produit par son ID
+router.get('/:id', asyncHandler(getProductById));
+
+
+// --- Routes Protégées (Utilisateurs authentifiés) ---
+
+// POST /api/products : Créer un produit avec images (max 5) et vidéo (max 1)
 router.post(
-  '/', 
-  protect as any, 
+  '/',
+  protect as unknown as RequestHandler,
   upload.fields([
-    { name: 'images', maxCount: 5 }, 
+    { name: 'images', maxCount: 5 },
     { name: 'video', maxCount: 1 }
-  ]), 
-  async (req: any, res: Response, next: NextFunction) => {
-    return createProduct(req, res, next);
-  }
-); 
+  ]),
+  asyncHandler(createProduct)
+);
 
-// Route protégée : Marquer un produit comme vendu
-router.patch('/:id/sold', protect as any, async (req: any, res: Response, next: NextFunction) => {
-  return markAsSold(req, res, next);
-});
+// POST /api/products/:id/favorite (et /favorites) : Ajouter ou retirer un produit des favoris
+// Ces deux lignes corrigent directement l'erreur 404 du Frontend
+router.post(
+  '/:id/favorite',
+  protect as unknown as RequestHandler,
+  asyncHandler(toggleFavorite)
+);
 
-// Route sécurisée et restreinte : Supprimer un produit (Admin / Super Admin uniquement)
+router.post(
+  '/:id/favorites',
+  protect as unknown as RequestHandler,
+  asyncHandler(toggleFavorite)
+);
+
+// PATCH /api/products/:id/sold : Marquer un produit comme vendu
+router.patch(
+  '/:id/sold',
+  protect as unknown as RequestHandler,
+  asyncHandler(markAsSold)
+);
+
+
+// --- Routes Restreintes (Administration) ---
+
+// DELETE /api/products/:id : Supprimer un produit (ADMIN / SUPER_ADMIN uniquement)
 router.delete(
-  '/:id', 
-  protect as any, 
-  restrictTo(Role.ADMIN, Role.SUPER_ADMIN) as any, 
-  async (req: any, res: Response, next: NextFunction) => {
-    return deleteProduct(req, res, next);
-  }
+  '/:id',
+  protect as unknown as RequestHandler,
+  restrictTo(Role.ADMIN, Role.SUPER_ADMIN) as unknown as RequestHandler,
+  asyncHandler(deleteProduct)
 );
 
 export default router;
